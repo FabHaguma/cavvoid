@@ -7,6 +7,10 @@ const workerPath = new URL(
   "../frontend/assets/js/service-worker.js",
   import.meta.url,
 );
+const sharePath = new URL(
+  "../frontend/assets/js/share-target.js",
+  import.meta.url,
+);
 const types = {
   js: ["text/javascript", "application/javascript"],
   css: ["text/css"],
@@ -33,6 +37,7 @@ export function pwaBuild() {
       order: "post",
       handler(options, bundle) {
         this.addWatchFile(fileURLToPath(workerPath));
+        this.addWatchFile(fileURLToPath(sharePath));
         const staticFiles = new Map();
         const index = bundle["index.html"]?.source;
         if (typeof index !== "string")
@@ -60,7 +65,10 @@ export function pwaBuild() {
         }
         const assets = [];
         const hash = createHash("sha256");
-        const worker = readFileSync(workerPath, "utf8");
+        const worker =
+          readFileSync(sharePath, "utf8").replace(/\bexport /g, "") +
+          "\n" +
+          readFileSync(workerPath, "utf8");
         hash.update(worker);
         for (const [filename, data] of [
           ...Object.values(bundle).map((entry) => [

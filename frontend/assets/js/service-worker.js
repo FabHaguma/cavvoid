@@ -77,6 +77,37 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (
+    request.method === "POST" &&
+    request.mode === "navigate" &&
+    url.origin === self.location.origin &&
+    url.pathname === "/share-target"
+  ) {
+    // Receive only an unsent device-local draft. All server reads/uploads still
+    // pass through the existing Gatekeeper route and normal CSRF-protected APIs.
+    event.respondWith(
+      (async () => {
+        let destination;
+        try {
+          const id = await stageShare(await request.formData());
+          destination = "/?share=" + encodeURIComponent(id);
+        } catch (error) {
+          const code = ["too-large", "empty"].includes(error.code)
+            ? error.code
+            : "storage";
+          destination = "/?share-error=" + code;
+        }
+        return new Response(null, {
+          status: 303,
+          headers: {
+            Location: new URL(destination, self.location.origin).href,
+            "Cache-Control": "no-store",
+          },
+        });
+      })(),
+    );
+    return;
+  }
+  if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||
     request.headers.has("Range")

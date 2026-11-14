@@ -446,7 +446,7 @@ Offline upload queues and offline content libraries are excluded from the MVP.
 
 ### PWA-04: System Sharing Integration
 
-**Priority: P2 — Post-MVP**
+**Priority: P1 — Android follow-up requested 2026-11-14**
 
 On compatible Android browsers, CavVoid should integrate with the operating system's Share menu using the Web Share Target API.
 
@@ -459,6 +459,8 @@ Example:
 5. User confirms the upload.
 
 The feature must respect platform compatibility.
+
+Implement this through the installed PWA's multipart POST share target and service worker, keeping the existing shared Gatekeeper Caddy import. Open shared text/links/files in the current Drop composer after its access check; require an explicit send action and the normal mutation/expiration/quota rules. Put only an opaque handoff ID in navigation/return URLs, never shared content. To survive sign-in redirects, incoming unsent shares may use a temporary device-local IndexedDB handoff: maximum 10 files/100 MB per share, 100 KB UTF-8 text, five pending drafts/about 200 MB, ten-minute validity, deletion on claim and cleanup of expired records at the next launch/receipt. This is not an offline upload queue or a cache of server items. Test native receipt/storage behavior and real browser handoff separately from physical Android installation/share-picker acceptance.
 
 On iOS, the baseline workflow remains manual copying, pasting, or choosing files within CavVoid.
 

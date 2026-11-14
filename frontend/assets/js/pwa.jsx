@@ -40,6 +40,13 @@ export function PwaPanel({
             view drops, or upload.
           </p>
         )}
+        {!compact && (
+          <p className="pwa-help">
+            On Android, install CavVoid from Chrome’s menu to add it to your
+            phone’s Share menu. Then share a link, selected text, photo or file
+            from another app → CavVoid. Review it here before sending.
+          </p>
+        )}
       </div>
       <div className="pwa-actions">
         {state.updateReady && (

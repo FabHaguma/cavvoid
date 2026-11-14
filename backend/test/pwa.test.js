@@ -16,6 +16,8 @@ import {
 import { watchPwa } from "../../frontend/assets/js/pwa.js";
 import { apiRequest } from "../../frontend/assets/js/api.js";
 import { uploadFile } from "../../frontend/assets/js/upload.js";
+import { IDBFactory } from "fake-indexeddb";
+import { takeShare } from "../../frontend/assets/js/share-target.js";
 
 function artifacts(entry = "static code") {
   const emitted = new Map(),
@@ -61,6 +63,7 @@ function worker({
     claimed = 0,
     skipped = 0;
   const unread = new Set();
+  const indexedDB = new IDBFactory();
   const key = (url) =>
     new URL(typeof url === "string" ? url : url.url, origin).href;
   const caches = {
@@ -143,6 +146,11 @@ function worker({
     AbortController,
     setTimeout,
     clearTimeout,
+    indexedDB,
+    crypto: globalThis.crypto,
+    TextEncoder,
+    Blob,
+    File,
   });
   async function lifecycle(type, data) {
     let result;
@@ -156,7 +164,13 @@ function worker({
   }
   async function get(
     url,
-    { method = "GET", mode = "cors", headers = {}, cache = "default" } = {},
+    {
+      method = "GET",
+      mode = "cors",
+      headers = {},
+      cache = "default",
+      form,
+    } = {},
   ) {
     let response,
       handled = false;
@@ -167,6 +181,7 @@ function worker({
         mode,
         headers: new Headers(headers),
         cache,
+        formData: async () => form,
       },
       respondWith(value) {
         handled = true;
@@ -184,6 +199,7 @@ function worker({
     lifecycle,
     get,
     caches,
+    indexedDB,
     offline: () => {
       broken = true;
     },
@@ -201,6 +217,17 @@ test("PWA build emits stable identity, correct icons, a content-free shell and a
   assert.equal(manifest.scope, "/");
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.orientation, "any");
+  assert.deepEqual(manifest.share_target, {
+    action: "/share-target",
+    method: "POST",
+    enctype: "multipart/form-data",
+    params: {
+      title: "title",
+      text: "text",
+      url: "url",
+      files: [{ name: "files", accept: ["*/*"] }],
+    },
+  });
   for (const name of [
     "icon-192",
     "icon-512",
@@ -222,6 +249,53 @@ test("PWA build emits stable identity, correct icons, a content-free shell and a
   assert.match(first.emitted.get("pwa-shell.html"), /<div id="root"><\/div>/);
   assert.ok(!first.emitted.get("sw.js").includes("__CAVVOID_PWA_CONFIG__"));
   assert.notEqual(first.emitted.get("sw.js"), second.emitted.get("sw.js"));
+});
+
+test("Android share receipt stages a draft, redirects with only an opaque token and never uploads or caches it", async () => {
+  const f = worker({ offline: true });
+  const form = new FormData();
+  form.set("text", "Private incoming text");
+  form.append(
+    "files",
+    new File(["Private file bytes"], "photo.png", { type: "image/png" }),
+  );
+  const result = await f.get("/share-target", {
+    method: "POST",
+    mode: "navigate",
+    form,
+  });
+  assert.equal(result.handled, true);
+  assert.equal(result.response.status, 303);
+  assert.equal(result.response.headers.get("Cache-Control"), "no-store");
+  const destination = new URL(result.response.headers.get("Location"));
+  assert.equal(destination.origin, "http://localhost:3000");
+  assert.equal(destination.pathname, "/");
+  assert.deepEqual([...destination.searchParams.keys()], ["share"]);
+  assert.doesNotMatch(destination.href, /Private|photo|bytes/);
+  const draft = await takeShare(destination.searchParams.get("share"), {
+    factory: f.indexedDB,
+  });
+  assert.equal(draft.text, "Private incoming text");
+  assert.equal(draft.files[0].name, "photo.png");
+  assert.equal(await draft.files[0].blob.text(), "Private file bytes");
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.writes.length, 0);
+  const invalid = await f.get("/share-target", {
+    method: "POST",
+    mode: "navigate",
+    form: new FormData(),
+  });
+  assert.match(
+    invalid.response.headers.get("Location"),
+    /\?share-error=empty$/,
+  );
+  for (const [url, mode, method] of [
+    ["http://localhost:4000/share-target", "navigate", "POST"],
+    ["/share-target", "cors", "POST"],
+    ["/share-target", "navigate", "GET"],
+    ["/api/items/text", "cors", "POST"],
+  ])
+    assert.equal((await f.get(url, { method, mode, form })).handled, false);
 });
 
 test("install caches exactly the static allowlist without credentials, API data or redirects", async () => {

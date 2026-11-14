@@ -1,6 +1,6 @@
 # CavVoid VPS preparation
 
-**Status:** Both services passed VPS health checks after the readiness correction. Shared Caddy validation/restart and the signed-out HTTPS redirect passed. Signed-in access revealed an unnecessary CavVoid secret requirement; this release removes it and uses Fabrice's existing shared `gatekeeper_app` snippet. The updated images and signed-in journey still need VPS verification.
+**Status:** Android Share Target support is implemented and tested locally (97 checks, production build, real Chrome handoff/composer checks with mocked sign-in). Deploy this update, then install/reinstall from Chrome on Android and check **Share → CavVoid**. The existing shared `gatekeeper_app` integration needs no change. Physical Android and updated live acceptance remain pending; previous VPS image health, Caddy validation and unsigned HTTPS redirect already passed.
 
 **Domain:** `https://cavvoid.haguma.com` → **Caddy upstream:** `frontend_cavvoid:80`. The backend is `backend_cavvoid:3001` on the app-private network, with no host port. The Compose project is `cavvoid`; its persistent volume is `cavvoid_cavvoid_data`.
 
@@ -26,6 +26,8 @@ cavvoid.haguma.com {
 ```
 
 Then open `https://cavvoid.haguma.com`, sign in, create a text drop and refresh. With that block already active, the app update needs no Caddy restart. The same update commands work for future releases; deleting the obsolete setting again is harmless. On a new checkout using the default limits/login origin, omit `--env-file deploy/production.env` and prefix Compose with `CAVVOID_RELEASE="$(git rev-parse HEAD)"`; the app needs no production secrets.
+
+For Android sharing, open the updated site in Chrome, sign in and install CavVoid using **Install app**. If already installed, open the app and accept **Update & reload** when shown. If Android's Share menu still lacks CavVoid, remove/reinstall the old PWA from Chrome to register the new share-target manifest. Then share a link from Chrome or a photo/file from another app → **CavVoid**, review it, and send. Installation/manifest behavior follows [Chrome's Web Share Target documentation](https://developer.chrome.com/docs/capabilities/web-apis/web-share-target). Server data stays in the existing VPS volume.
 
 ## Confirmed host details and remaining checks
 

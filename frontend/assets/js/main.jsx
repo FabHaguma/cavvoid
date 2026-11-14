@@ -7,6 +7,7 @@ import { DropDialog, TransferFeed } from "./transfers.jsx";
 import { startLiveSync } from "./live-sync.js";
 import { watchPwa } from "./pwa.js";
 import { PwaPanel } from "./pwa.jsx";
+import { expireShares, receiveShare } from "./share-target.js";
 import "../css/styles.css";
 import logo from "../images/cavvoid.svg";
 
@@ -94,6 +95,9 @@ function Settings({
 
 function AccessState({ error, retry, pwa, pwaController }) {
   const offline = ["offline", "network_unavailable"].includes(error?.code);
+  const signInUrl =
+    error?.signInUrl ||
+    ([401, 403].includes(error?.status) ? window.location.href : null);
   return (
     <main className="access-screen">
       <img src={logo} alt="" width="48" height="48" />
@@ -117,8 +121,8 @@ function AccessState({ error, retry, pwa, pwaController }) {
           <button className="button primary" onClick={retry}>
             {offline ? "Reconnect" : "Try again"}
           </button>
-          {error.signInUrl && (
-            <a className="button secondary" href={error.signInUrl}>
+          {signInUrl && (
+            <a className="button secondary" href={signInUrl}>
               Sign in
               <Icon name="arrow" size={18} />
             </a>
@@ -142,8 +146,10 @@ function App() {
   const [error, setError] = useState(null);
   const [dropOpen, setDropOpen] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState([]);
+  const [droppedText, setDroppedText] = useState("");
   const openDrop = () => {
     setDroppedFiles([]);
+    setDroppedText("");
     setDropOpen(true);
   };
   const [retryKey, setRetryKey] = useState(0);
@@ -154,12 +160,16 @@ function App() {
   const [pwa, setPwa] = useState({ supported: true, ready: false });
   const pwaController = useRef(null);
   const accessEpoch = useRef(0);
+  const incomingRead = useRef(null);
+  const incomingHandled = useRef(false);
   const handleApiError = useCallback((err) => {
     if (![401, 403].includes(err.status)) return false;
     accessEpoch.current++;
     live.current?.stop();
     setAccess(null);
     setDroppedFiles([]);
+    setDroppedText("");
+    incomingRead.current = null;
     setDropOpen(false);
     setError(err);
     return true;
@@ -171,6 +181,38 @@ function App() {
         ? "kept"
         : "void";
   const hasAccess = Boolean(access);
+  useEffect(() => {
+    expireShares().catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!hasAccess || incomingHandled.current) return;
+    let active = true;
+    const epoch = accessEpoch.current;
+    incomingRead.current ||= receiveShare(window.location.href);
+    incomingRead.current.then((draft) => {
+      if (!active || epoch !== accessEpoch.current) return;
+      incomingHandled.current = true;
+      incomingRead.current = null;
+      if (!draft) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("share");
+      url.searchParams.delete("share-error");
+      window.history.replaceState(
+        null,
+        "",
+        url.pathname + url.search + url.hash,
+      );
+      if (draft.message) setFeedback(draft.message);
+      else {
+        setDroppedText(draft.text);
+        setDroppedFiles(draft.files);
+        setDropOpen(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [hasAccess]);
   useEffect(() => {
     if (!hasAccess) return;
     const controller = new AbortController();
@@ -233,6 +275,8 @@ function App() {
         ) {
           setAccess(null);
           setDroppedFiles([]);
+          setDroppedText("");
+          incomingRead.current = null;
           setDropOpen(false);
           setError(err);
           if (
@@ -260,6 +304,8 @@ function App() {
       flushSync(() => {
         setAccess(null);
         setDroppedFiles([]);
+        setDroppedText("");
+        incomingRead.current = null;
         setDropOpen(false);
       });
     };
@@ -323,6 +369,8 @@ function App() {
     flushSync(() => {
       setAccess(null);
       setDroppedFiles([]);
+      setDroppedText("");
+      incomingRead.current = null;
       setDropOpen(false);
     });
     window.location.assign(url);
@@ -367,6 +415,7 @@ function App() {
         if (event.dataTransfer.files.length) {
           event.preventDefault();
           if (!dropOpen) {
+            setDroppedText("");
             setDroppedFiles(Array.from(event.dataTransfer.files));
             setDropOpen(true);
           }
@@ -585,11 +634,13 @@ function App() {
         defaultExpiration={preferences.defaultExpiration}
         onClose={() => {
           setDroppedFiles([]);
+          setDroppedText("");
           setDropOpen(false);
         }}
         maxBytes={access.limits?.maxTextBytes}
         fileLimits={access.limits}
         initialFiles={droppedFiles}
+        initialText={droppedText}
         onAccessError={handleApiError}
         onSaved={(item) => {
           setFeedVersion((value) => value + 1);

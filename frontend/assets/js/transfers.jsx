@@ -80,6 +80,7 @@ export function DropDialog({
   onAccessError,
   fileLimits = {},
   initialFiles = [],
+  initialText = "",
   defaultExpiration = "24h",
 }) {
   const [mode, setMode] = useState("text");
@@ -97,7 +98,7 @@ export function DropDialog({
     if (open) {
       setMode(initialFiles.length ? "files" : "text");
       setRetention(defaultExpiration);
-      setText("");
+      setText(initialText);
       setError("");
       setNotice("");
       submission.current = crypto.randomUUID();
@@ -133,7 +134,11 @@ export function DropDialog({
     try {
       const result = await saveText(text, submission.current, retention);
       onSaved(result.item);
-      onClose();
+      if (initialFiles.length && initialText) {
+        setText("");
+        setMode("files");
+        submission.current = crypto.randomUUID();
+      } else onClose();
     } catch (err) {
       if (!onAccessError(err)) setError(err.message);
     } finally {
@@ -152,6 +157,14 @@ export function DropDialog({
       <span className="eyebrow">OUT OF THIS DEVICE. INTO YOUR VOID.</span>
       <h2 id="drop-title">Drop something.</h2>
       <p>A note, a link, a file. Pick it up on your other device.</p>
+      {(initialText || initialFiles.length > 0) && (
+        <p className="form-note" role="status">
+          Ready to send. Review your content and expiration first.
+          {initialText &&
+            initialFiles.length > 0 &&
+            " Send the text and files from their separate tabs."}
+        </p>
+      )}
       <div className="drop-type-switch" role="group" aria-label="Drop type">
         <button
           className={mode === "text" ? "active" : ""}
@@ -181,8 +194,8 @@ export function DropDialog({
           submission.current = crypto.randomUUID();
         }}
       />
-      {mode === "files" ? (
-        open && (
+      <div hidden={mode !== "files"}>
+        {open && (
           <UploadPanel
             initialFiles={initialFiles}
             maxFileBytes={fileLimits.maxFileBytes}
@@ -193,8 +206,9 @@ export function DropDialog({
             onClose={onClose}
             retention={retention}
           />
-        )
-      ) : (
+        )}
+      </div>
+      {mode === "text" && (
         <>
           <form onSubmit={submit}>
             <div className="composer-label">
