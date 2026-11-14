@@ -36,13 +36,7 @@ services:
       - ALL
     stop_grace_period: 40s
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:3001/health',{headers:{Host:new URL(process.env.APP_ORIGIN).host}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
+      test: ["CMD", "node", "scripts/healthcheck.js"]
       interval: 20s
       timeout: 5s
       start_period: 20s

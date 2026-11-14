@@ -1,24 +1,24 @@
 # CavVoid VPS preparation
 
-**Status:** Deployment package prepared locally; exact host handoff awaits the VPS folder, live Caddy mount/container, gateway checkout/upstream, and service/network conflict evidence. Nothing has been deployed.
+**Status:** The VPS paths/network and image builds are confirmed. Gatekeeper's app-list update passed validation and its backend is healthy. CavVoid's first startup was blocked by an incorrect readiness probe despite its server running; the corrected probe is being rolled out. Live acceptance is still pending.
 
 **Domain:** `https://cavvoid.haguma.com` → **Caddy upstream:** `frontend_cavvoid:80`. The backend is `backend_cavvoid:3001` on the app-private network, with no host port. The Compose project is `cavvoid`; its persistent volume is `cavvoid_cavvoid_data`.
 
-**Next:** Supply the missing host details or an SSH target for read-only inspection. Once confirmed, the short release path is laptop commit/push → SSH → pull/build in the chosen VPS folder → scoped gateway/Caddy update → start only CavVoid. Those mutation commands belong to requested milestone 9. Do not run the rollout sections merely to review this package.
+**Next:** Pull the readiness fix into `/home/fabrice/Projects/cavvoid`, update the release tag with the existing production-settings helper (it preserves the app proof), and rebuild/recreate only CavVoid. Keep `cavvoid_cavvoid_data`. Continue Caddy validation/application and live tests only once both app services are healthy.
 
-## Confirmed facts and missing host details
+## Confirmed host details and remaining checks
 
 | Item | Evidence/status |
 |---|---|
 | App origin | `https://cavvoid.haguma.com`, supplied by Fabrice; DNS registration reported, live routing not checked |
 | Source repository | `https://github.com/FabHaguma/cavvoid.git`, from this checkout's Git remote |
-| App services | Package uses `frontend_cavvoid:80`, `backend_cavvoid:3001`; local configuration search found no competing definition; live conflict check pending |
-| Ingress network | Existing convention `caddy_network`; confirm membership/aliases on the VPS |
-| App checkout | **Missing.** Suggested `~/apps/cavvoid` is a choice to confirm, not a verified server path |
-| Caddy | Local `Programming/Server/caddy/docker-compose.yml` names `caddy_proxy` and mounts `./Caddyfile` at `/etc/caddy/Caddyfile`; current live container and host-side path remain unconfirmed |
-| Gateway | Local OAuthenticator production reference uses `https://login.haguma.com`, `backend_gatekeeper:4000`, `COOKIE_DOMAIN=haguma.com`; confirm live values and checkout/env/Compose paths |
-| Shared config layout | Local shared Caddyfile contains other sites and no current gateway/CavVoid block. Determine which of the actual one/two shared files owns this hostname; add only the CavVoid block there |
-| Runtime | Docker/Compose, image builds, Nginx/Caddy validation, ingress isolation, HTTPS and persistence are **pending on the VPS**; local Docker was not probed or used |
+| App services | `frontend_cavvoid:80`, `backend_cavvoid:3001`; the supplied VPS inventory showed no existing CavVoid services before the initial creation |
+| Ingress network | `caddy_network` exists; Caddy and Gatekeeper are members in the supplied live inventory |
+| App checkout | `/home/fabrice/Projects/cavvoid`, confirmed by VPS output |
+| Caddy | `caddy_proxy`; `/home/fabrice/Projects/caddy/Caddyfile` → `/etc/caddy/Caddyfile`, confirmed by mount inspection |
+| Gateway | `/home/fabrice/Projects/OAuthenticator`; `gatekeeper-backend_gatekeeper-1`, service `backend_gatekeeper:4000`. Its runtime login origin was used to generate CavVoid's private settings; app-list validation/recreation passed |
+| Shared config layout | Change only the CavVoid block in the confirmed shared Caddyfile; keep all other site blocks/imports intact |
+| Runtime | VPS Docker/Compose and both image builds passed. Corrected app startup, Nginx/Caddy validation, ingress isolation, HTTPS and persistence checks remain pending; local Docker was not probed or used |
 
 On the intended VPS checkout, the read-only helper collects container names, ports, networks, selected Caddy mounts/version and disk space without dumping environments or Caddyfile secrets:
 
@@ -174,6 +174,12 @@ If a rollout fails, stop further changes. Prefer recreating only CavVoid with th
 
 ## Validation record and sources
 
-Native checks cover the production config/admission boundary without Docker. Image builds, Compose runtime validation, Nginx `-t`, actual shared Caddy validation/reload, TLS/DNS, persistent volume ownership, backend recreation/DNS resolution, private network bypass tests, backup/restore and physical devices must run on the intended VPS in milestone 9. The host identifiers above are still required to finish milestone 8's exact handoff.
+### Initial VPS startup correction
+
+Both images built successfully from `acf3d78bc2d6864318a1a5c39326f9cc7e242d72`. Initial startup created the private network/data volume, but Node's `fetch` health check did not preserve the explicit public Host header. The app's Host guard therefore rejected the loopback probe while server logs showed normal startup. `scripts/healthcheck.js` now uses core HTTP to preserve that header, requires the database-ready JSON response, bounds response size/time, and reports safe failure codes. Native regression coverage exercises the actual production Host guard, HTTP failure, invalid readiness data and a stalled response. The public Host guard and authentication remain enforced. Rebuild the backend image with this script; do not remove/reset the data volume or rotate the ingress secret to fix a probe failure.
+
+After this correction, `npm test` passed all 89 native checks on Node 22.15.0. The rebuilt image still needs to pass its actual VPS health check.
+
+Native checks cover the production config/admission boundary without Docker. Both initial image builds and Gatekeeper configuration validation passed on the VPS. The corrected app startup, Nginx `-t`, actual shared Caddy validation/application, TLS/DNS, persistent volume ownership, backend recreation/DNS resolution, private network bypass tests, backup/restore and physical-device checks remain to be verified there during milestone 9.
 
 Reference behavior follows [Caddy forward authentication](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy proxy header controls](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers), [Nginx path/buffering controls](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [Compose service health/environment settings](https://docs.docker.com/reference/compose-file/services/), and [SQLite WAL persistence](https://www.sqlite.org/wal.html). These sources describe the software contracts, not this VPS's current configuration.

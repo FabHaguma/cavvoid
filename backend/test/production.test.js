@@ -22,6 +22,8 @@ import {
 } from "./helpers.js";
 import { prepareProduction } from "../../scripts/prepare-production.js";
 import { verifyData } from "../../scripts/verify-data.js";
+import { probeHealth } from "../../scripts/healthcheck.js";
+import { createServer } from "node:http";
 
 const environment = {
   NODE_ENV: "production",
@@ -40,6 +42,44 @@ const environment = {
     "files",
   ),
 };
+
+test("readiness probe preserves the public Host, reports errors and bounds stalled responses", async (t) => {
+  const config = { ...loadConfig(environment), filesDirectory: null };
+  const instance = createApp({
+    config,
+    database: openDatabase(":memory:", "Readiness fixture"),
+  });
+  const server = await listen(instance.app);
+  t.after(async () => {
+    await closeServer(server);
+    instance.close();
+  });
+  const options = { appOrigin: config.appOrigin, port: server.address().port };
+  assert.deepEqual(await probeHealth(options), { ok: true, status: 200 });
+  assert.deepEqual(
+    await probeHealth({ ...options, appOrigin: "https://wrong.example" }),
+    { ok: false, code: "http_error", status: 421 },
+  );
+  const fake = createServer((req, res) => {
+    if (req.headers.host === "stalled.example") return;
+    res.end('{"status":"unavailable"}');
+  });
+  await new Promise((resolve) => fake.listen(0, "127.0.0.1", resolve));
+  t.after(() => closeServer(fake));
+  assert.deepEqual(
+    await probeHealth({ ...options, port: fake.address().port }),
+    { ok: false, code: "invalid_response" },
+  );
+  assert.deepEqual(
+    await probeHealth({
+      ...options,
+      port: fake.address().port,
+      appOrigin: "https://stalled.example",
+      timeoutMs: 100,
+    }),
+    { ok: false, code: "timeout" },
+  );
+});
 
 test("production startup requires explicit HTTPS, persistent paths and separate ingress proof", () => {
   const config = loadConfig(environment);

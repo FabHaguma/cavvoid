@@ -20,6 +20,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY backend ./backend
 COPY shared ./shared
 COPY scripts/verify-data.js ./scripts/verify-data.js
+COPY scripts/healthcheck.js ./scripts/healthcheck.js
 # File storage checks resolve the public root even though Nginx owns the UI.
 RUN mkdir -p /app/frontend /data && chown node:node /data
 USER node

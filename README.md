@@ -6,7 +6,7 @@ Your private pocket between devices. **Drop it in. Pull it out.**
 
 **Try:** Search for text or a filename in **Void** or **Kept**, then choose a content type or **Void & Kept**. In **Settings**, check storage usage and save a default expiration for new drops. The local demo password is `ADMIN_PASSWORD` in the ignored `.local/gatekeeper.env` file.
 
-**Next:** Milestone 8's [deployment package](deploy/README.md) is prepared locally. Completing its exact handoff needs the VPS folder, live Caddy container/mount, and Gatekeeper checkout/upstream, or an SSH target for read-only inspection. Deployment is milestone 9 and requires your request.
+**Next:** VPS paths and image builds are confirmed, and the guided rollout is underway. Pull the [backend readiness correction](deploy/README.md#initial-vps-startup-correction), preserve the existing secret/data volume, and retry CavVoid startup. Live verification is still pending.
 
 Text, links, and private file transfers work through Gatekeeper, with live updates, search, filters, storage settings, details, deletion, and pages of 30 drops. The initial default expiration is 24 hours; save another default or choose 10 minutes, 1 hour, 24 hours, 7 days, or Keep for each drop. Expired drops are denied immediately, with cleanup at startup and every 30 seconds. Limits initially are 100 KB text, 100 MB per file, and 2 GB file storage, including reservations and pending physical deletions. Refresh remains available as a manual fallback. The responsive PWA and offline shell work locally; physical phone installation and standalone launch remain [release checks](IMPLEMENTATION_PLAN.md).
 

@@ -2,11 +2,11 @@
 
 **Updated:** 2026-11-14\
 **Source:** [PRD v1.1](cavvoid-prd.md)\
-**Current state:** Milestones 1–7 complete locally. Milestone 8's deployment package is prepared and natively tested; completion awaits exact VPS/Caddy/Gatekeeper identifiers and conflict confirmation. Independent browser-profile GUI and physical-device/VPS runtime checks remain unverified. Milestone 9 has not started; nothing has been deployed.
+**Current state:** Milestones 1–7 complete locally. The milestone 8 package now has confirmed VPS paths/network and successful image builds. The guided milestone 9 rollout is in progress: Gatekeeper is healthy, and CavVoid's incorrect readiness probe is being corrected before retrying startup. Live application acceptance and physical-device checks remain pending.
 
 ## Start here
 
-Supply the missing VPS details in [deploy/README.md](deploy/README.md), or an SSH target for read-only inspection, to finish milestone 8's exact handoff. Deployment stays separate until milestone 9 is requested.
+Continue the guided VPS rollout using the confirmed [deployment details](deploy/README.md). Apply the readiness correction without removing the data volume or changing the existing app proof, then verify actual app health before applying Caddy and testing the live site.
 
 Implement one milestone per request. At the end, show the working preview or prepared files, say what was actually verified, update the status below, and stop with: **"Milestone N complete. Tell me 'Implement milestone N+1' when you are ready."** Do not begin the next milestone automatically. If required checks fail, finish the current milestone or report its specific blocker without claiming it is complete.
 
@@ -21,8 +21,8 @@ Milestone 8 prepares deployment files. Milestone 9 performs deployment and needs
 | 5 | Real-time updates across devices | 4 | Complete — 2026-11-14 |
 | 6 | Mobile PWA and offline behavior | 5 | Complete — 2026-11-14 |
 | 7 | Search, settings, and local release checks | 6 | Complete locally — 2026-11-14; release limits recorded below |
-| 8 | VPS deployment package and handoff | 7 | Package prepared — 2026-11-14; awaiting exact host identifiers/conflict check |
-| 9 | Requested deployment and live acceptance | 8 + explicit deployment request | Not started; optional until requested |
+| 8 | VPS deployment package and handoff | 7 | Package/host paths confirmed; VPS image builds passed |
+| 9 | Requested deployment and live acceptance | 8 + deployment request | Guided rollout in progress; readiness correction awaiting VPS retry |
 
 ## Integration decisions
 
@@ -263,3 +263,9 @@ At each milestone handoff, update its status and append a short record here with
 - **Required to finish milestone 8:** Chosen VPS checkout/SSH target; actual Caddy container and host/container config paths, including which shared file owns the site; actual gateway origin/upstream/checkout/env/Compose paths; and read-only service/network/volume conflict evidence. An input request was sent while preparation continued. Unresolved values are visibly marked in the draft, not presented as verified commands.
 - **Pending on the VPS after a deployment request:** Image builds/Compose validation, Nginx and actual shared Caddy validation, proof/cookie/network isolation, HTTPS/DNS, data-volume ownership/recreation, backend DNS refresh, backup/restore runtime checks and physical devices. No production config, gateway registration, DNS, shared ingress, commit/push or deployment changed.
 - **Handoff status:** Milestone 8 is **awaiting those host details**, not complete. Once confirmed and the exact handoff is finished, remind Fabrice: **"Milestone 8 complete. Tell me 'Deploy CavVoid — milestone 9' when you want the VPS rollout."** Do not start milestone 9 from this preparation request.
+
+### VPS rollout progress — 2026-11-14
+
+- Fabrice requested commit/push and began the guided VPS rollout. Release `acf3d78bc2d6864318a1a5c39326f9cc7e242d72` was pushed to `main`, cloned into `/home/fabrice/Projects/cavvoid`, and both images built successfully. The live inventory confirmed Caddy/Gatekeeper on `caddy_network`, with no CavVoid services before creation.
+- Confirmed Caddy container/mount: `caddy_proxy`, `/home/fabrice/Projects/caddy/Caddyfile` → `/etc/caddy/Caddyfile`. Gateway checkout: `/home/fabrice/Projects/OAuthenticator`. The existing Gatekeeper app-list update passed native configuration validation in its image, and its backend returned healthy.
+- Initial CavVoid startup created its scoped network/data volume. Backend logs showed normal server startup, but its health probe failed. Native reproduction showed Node fetch replacing the configured Host with loopback; the protected public-host guard returned an error to the probe. Switched to a bounded core-HTTP readiness script and added a production-guard regression test. No authentication bypass, volume reset or secret rotation is required. Application health through the corrected image and subsequent live/device acceptance remain pending.
