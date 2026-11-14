@@ -1,0 +1,72 @@
+# Expanded only at container startup; never print nginx -T (it includes proof).
+map $http_x_cavvoid_ingress $cavvoid_ingress_ok {
+    default 0;
+    ~^${CAVVOID_INGRESS_SECRET}$ 1;
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+    access_log off;
+    error_log /dev/stderr crit;
+    log_not_found off;
+    include /etc/nginx/cavvoid-security-headers.conf;
+
+    # Other containers on the shared ingress network cannot bypass Caddy's gate.
+    if ($cavvoid_ingress_ok = 0) { return 403; }
+
+    client_max_body_size ${CAVVOID_BODY_LIMIT_BYTES};
+    client_body_timeout 1200s;
+    send_timeout 1200s;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $cavvoid_backend http://backend_cavvoid:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Connection "";
+    proxy_set_header Cookie "";
+    proxy_set_header X-Gatekeeper-Proxy-Key "";
+    proxy_set_header X-CavVoid-Ingress $http_x_cavvoid_ingress;
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header X-Forwarded-Host "";
+    proxy_set_header X-Forwarded-Proto "";
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_max_temp_file_size 0;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 1200s;
+    proxy_send_timeout 1200s;
+    proxy_intercept_errors off;
+
+    location = /nginx-health { return 204; }
+    location = /health { return 404; }
+    location = /api { return 404; }
+    location = /api/events {
+        proxy_read_timeout 40s;
+        proxy_pass $cavvoid_backend$request_uri;
+    }
+    location ^~ /api/ {
+        proxy_pass $cavvoid_backend$request_uri;
+    }
+    location = /pwa-shell.html {
+        include /etc/nginx/cavvoid-security-headers.conf;
+        add_header X-CavVoid-Shell "static" always;
+        try_files $uri =404;
+    }
+    location = /sw.js {
+        include /etc/nginx/cavvoid-security-headers.conf;
+        add_header Service-Worker-Allowed "/" always;
+        try_files $uri =404;
+    }
+    location = /manifest.webmanifest {
+        types { application/manifest+json webmanifest; }
+        default_type application/manifest+json;
+        try_files $uri =404;
+    }
+    location ~ (^|/)\. { return 404; }
+    location = / { try_files /index.html =404; }
+    location ~ ^/(kept|settings)$ { try_files /index.html =404; }
+    location / { try_files $uri =404; }
+}

@@ -10,6 +10,21 @@ lerna-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
+backend/data/
+.local/
+deploy/production.env
+deploy/production.env.*.tmp
+deploy/host.json
+deploy/private/
+backups/
+*.blob
+*.part
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
 pids
 *.pid
 *.seed

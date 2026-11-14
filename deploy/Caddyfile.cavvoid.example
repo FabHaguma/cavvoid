@@ -1,0 +1,39 @@
+# DRAFT: merge ONLY this block into the actual shared Caddyfile after inspection.
+# The gateway upstream below comes from the local Gatekeeper deployment reference;
+# confirm it on the VPS before applying. Preserve login and every other site.
+# Replace both placeholders in the PRIVATE deployed Caddyfile, never in Git.
+# GATEKEEPER secret = existing Gatekeeper PROXY_AUTH_SECRET, verification only.
+# CAVVOID secret = separate CAVVOID_INGRESS_SECRET from deploy/production.env.
+cavvoid.haguma.com {
+    # Drop search queries and credentials must not enter this site's access log.
+    log {
+        output discard
+    }
+    route {
+        forward_auth backend_gatekeeper:4000 {
+            uri /auth/verify
+            header_up X-Gatekeeper-Proxy-Key PASTE_EXISTING_GATEKEEPER_PROXY_SECRET_HERE
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {hostport}
+            header_up X-Forwarded-Uri {orig_uri}
+            header_up X-Forwarded-Method {orig_method}
+            header_up X-Forwarded-For {remote_host}
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 5s
+            }
+        }
+        reverse_proxy frontend_cavvoid:80 {
+            header_up Cookie "(^|;[ \\t]*)gatekeeper_session=[^;]*" "${1}gatekeeper_session="
+            header_up -X-Gatekeeper-Proxy-Key
+            header_up -X-User-Id
+            header_up -X-Auth-Request-User
+            header_up X-CavVoid-Ingress PASTE_SEPARATE_CAVVOID_INGRESS_SECRET_HERE
+            flush_interval -1
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 30s
+            }
+        }
+    }
+}

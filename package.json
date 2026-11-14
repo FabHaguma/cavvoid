@@ -1,0 +1,28 @@
+{
+  "name": "cavvoid",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A private pocket between your devices.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "setup:local": "node scripts/setup-local.js",
+    "dev": "node scripts/dev.js",
+    "build": "vite build",
+    "start": "node backend/server.js",
+    "test": "node --test backend/test/config.test.js backend/test/database.test.js backend/test/access.test.js backend/test/items.test.js backend/test/browser-boundaries.test.js backend/test/restart.test.js backend/test/files.test.js backend/test/retention.test.js backend/test/events.test.js backend/test/live-sync.test.js backend/test/pwa.test.js backend/test/release.test.js backend/test/production.test.js",
+    "test:gatekeeper": "node --test integration/gatekeeper.test.js",
+    "test:production": "node --test backend/test/production.test.js"
+  },
+  "dependencies": {
+    "busboy": "1.6.0",
+    "express": "5.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "vite": "8.3.8"
+  }
+}

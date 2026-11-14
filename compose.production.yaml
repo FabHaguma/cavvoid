@@ -1,0 +1,95 @@
+name: cavvoid
+
+services:
+  backend_cavvoid:
+    image: cavvoid-backend:${CAVVOID_RELEASE:?Set an identifiable CAVVOID_RELEASE tag}
+    build:
+      context: .
+      target: backend
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      AUTH_MODE: trusted-ingress
+      PORT: "3001"
+      APP_ORIGIN: https://cavvoid.haguma.com
+      GATEKEEPER_URL: ${GATEKEEPER_URL:?Set the verified browser-facing Gatekeeper HTTPS origin}
+      CAVVOID_INGRESS_SECRET: ${CAVVOID_INGRESS_SECRET:?Set a separate 64-character lowercase hex app secret}
+      DATABASE_PATH: /data/cavvoid.sqlite
+      FILES_PATH: /data/files
+      OWNER_DISPLAY_NAME: Fabrice
+      MAX_TEXT_BYTES: ${MAX_TEXT_BYTES:-102400}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-104857600}
+      STORAGE_QUOTA_BYTES: ${STORAGE_QUOTA_BYTES:-2147483648}
+    volumes:
+      - cavvoid_data:/data
+    networks:
+      - private
+    expose:
+      - "3001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 40s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health',{headers:{Host:new URL(process.env.APP_ORIGIN).host}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  frontend_cavvoid:
+    image: cavvoid-frontend:${CAVVOID_RELEASE:?Set an identifiable CAVVOID_RELEASE tag}
+    build:
+      context: .
+      target: frontend
+    restart: unless-stopped
+    depends_on:
+      backend_cavvoid:
+        condition: service_healthy
+    environment:
+      CAVVOID_INGRESS_SECRET: ${CAVVOID_INGRESS_SECRET:?Set a separate 64-character lowercase hex app secret}
+      MAX_FILE_BYTES: ${MAX_FILE_BYTES:-104857600}
+      MAX_TEXT_BYTES: ${MAX_TEXT_BYTES:-102400}
+    networks:
+      - private
+      - caddy_network
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'wget -q -O /dev/null --header="X-CavVoid-Ingress: $${CAVVOID_INGRESS_SECRET}" http://127.0.0.1/nginx-health',
+        ]
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  private:
+    internal: true
+  caddy_network:
+    external: true
+
+volumes:
+  cavvoid_data: {}
