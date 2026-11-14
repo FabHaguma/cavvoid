@@ -63,14 +63,9 @@ function secureOrigin(value, label) {
 export function loadConfig(env = { ...readEnvironment(), ...process.env }) {
   const production = env.NODE_ENV === "production";
   const origin = production ? secureOrigin : localOrigin;
-  if (
-    production &&
-    (env.AUTH_MODE !== "trusted-ingress" ||
-      env.CAVVOID_INGRESS_SECRET?.length !== 64 ||
-      !/^[a-f0-9]{64}$/.test(env.CAVVOID_INGRESS_SECRET || ""))
-  )
+  if (production && env.AUTH_MODE !== "trusted-ingress")
     throw new Error(
-      "Production requires AUTH_MODE=trusted-ingress and a separate 64-character lowercase hex CAVVOID_INGRESS_SECRET.",
+      "Production requires AUTH_MODE=trusted-ingress behind the shared Caddy Gatekeeper route.",
     );
   if (production && (env.GATEKEEPER_PROXY_SECRET || env.LOCAL_GATEKEEPER_REPO))
     throw new Error(
@@ -175,7 +170,6 @@ export function loadConfig(env = { ...readEnvironment(), ...process.env }) {
     host: production ? "0.0.0.0" : "127.0.0.1",
     production,
     authMode: production ? "trusted-ingress" : "local-gateway",
-    ingressSecret: production ? env.CAVVOID_INGRESS_SECRET : undefined,
     gatewayUrl: gateway.origin,
     proxySecret,
     timeoutMs,

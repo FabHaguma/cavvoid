@@ -12,8 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { projectRoot, loadConfig } from "../backend/config.js";
 
-// Run on the VPS checkout only when preparing a requested release. No credentials
-// are printed, no app is started, and an existing ingress secret is preserved.
+// Optional VPS settings helper. Preserve limits and drop the obsolete app secret;
+// authentication belongs to the existing shared Caddy/Gatekeeper route.
 export function prepareProduction({
   gatewayOrigin,
   release,
@@ -27,13 +27,12 @@ export function prepareProduction({
     throw new Error(
       "Set --release to the pushed commit SHA or another identifiable Docker tag.",
     );
-  const existing = existsSync(filename)
-    ? parseEnv(readFileSync(filename, "utf8"))
-    : {};
+  const existed = existsSync(filename);
+  const existing = existed ? parseEnv(readFileSync(filename, "utf8")) : {};
   const permitted = [
     "CAVVOID_RELEASE",
     "GATEKEEPER_URL",
-    "CAVVOID_INGRESS_SECRET",
+    "CAVVOID_INGRESS_SECRET", // Accepted only to migrate older settings away.
     "MAX_TEXT_BYTES",
     "MAX_FILE_BYTES",
     "STORAGE_QUOTA_BYTES",
@@ -49,8 +48,6 @@ export function prepareProduction({
   const values = {
     CAVVOID_RELEASE: release,
     GATEKEEPER_URL: gatewayOrigin,
-    CAVVOID_INGRESS_SECRET:
-      existing.CAVVOID_INGRESS_SECRET || randomBytes(32).toString("hex"),
     MAX_TEXT_BYTES: existing.MAX_TEXT_BYTES || "102400",
     MAX_FILE_BYTES: existing.MAX_FILE_BYTES || "104857600",
     STORAGE_QUOTA_BYTES: existing.STORAGE_QUOTA_BYTES || "2147483648",
@@ -70,7 +67,7 @@ export function prepareProduction({
   try {
     writeFileSync(
       temporary,
-      "# Private CavVoid runtime settings. Never commit or print this file.\n" +
+      "# CavVoid release settings. Authentication is handled by shared Caddy/Gatekeeper.\n" +
         Object.entries(values)
           .map(([key, value]) => `${key}=${value}`)
           .join("\n") +
@@ -82,7 +79,7 @@ export function prepareProduction({
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);
   }
-  return { filename, release, created: !existing.CAVVOID_INGRESS_SECRET };
+  return { filename, release, created: !existed };
 }
 
 if (
@@ -104,7 +101,7 @@ if (
       release: args[3],
     });
     console.log(
-      `${result.created ? "Created" : "Updated"} private runtime file for release ${result.release}. Existing ingress proof was preserved on updates. No services changed.`,
+      `${result.created ? "Created" : "Updated"} runtime file for release ${result.release}. Limits preserved; obsolete app secret removed. No services changed.`,
     );
   } catch (error) {
     console.error(error.message);

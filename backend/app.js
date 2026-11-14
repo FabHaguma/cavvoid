@@ -98,7 +98,7 @@ export function createApp({
     }
     next();
   });
-  // Loopback-only readiness; no owner information and no content.
+  // Internal readiness; no owner information and no content.
   app.get("/health", (req, res) => {
     db.health();
     res.json({ status: "ok" });

@@ -1,9 +1,4 @@
-# Expanded only at container startup; never print nginx -T (it includes proof).
-map $http_x_cavvoid_ingress $cavvoid_ingress_ok {
-    default 0;
-    ~^${CAVVOID_INGRESS_SECRET}$ 1;
-}
-
+# Caddy's shared gatekeeper_app snippet gates every public request.
 server {
     listen 80;
     server_name _;
@@ -13,9 +8,6 @@ server {
     error_log /dev/stderr crit;
     log_not_found off;
     include /etc/nginx/cavvoid-security-headers.conf;
-
-    # Other containers on the shared ingress network cannot bypass Caddy's gate.
-    if ($cavvoid_ingress_ok = 0) { return 403; }
 
     client_max_body_size ${CAVVOID_BODY_LIMIT_BYTES};
     client_body_timeout 1200s;
@@ -27,7 +19,6 @@ server {
     proxy_set_header Connection "";
     proxy_set_header Cookie "";
     proxy_set_header X-Gatekeeper-Proxy-Key "";
-    proxy_set_header X-CavVoid-Ingress $http_x_cavvoid_ingress;
     proxy_set_header X-Forwarded-For "";
     proxy_set_header X-Forwarded-Host "";
     proxy_set_header X-Forwarded-Proto "";

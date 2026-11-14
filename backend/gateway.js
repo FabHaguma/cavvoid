@@ -38,15 +38,10 @@ export function signInUrl(config, pathname = "/") {
 
 export async function verifyGateway(req, config, fetchImpl = fetch) {
   if (config.production) {
-    const supplied = req.get("X-CavVoid-Ingress") || "";
-    // Caddy overwrites this app-specific proof only after Gatekeeper approves.
-    // Network isolation is still required; no gateway cookie/secret enters the app.
-    const allowed =
-      supplied.length === 64 &&
-      /^[a-f0-9]{64}$/.test(supplied) &&
-      config.ingressSecret?.length === 64 &&
-      /^[a-f0-9]{64}$/.test(config.ingressSecret || "") &&
-      timingSafeEqual(Buffer.from(supplied), Buffer.from(config.ingressSecret));
+    // The shared Caddy gatekeeper_app route performs authentication. Production
+    // requests reach this backend only through Nginx on the app-private network.
+    // Do not require another credential or infer identity from client headers.
+    const allowed = config.authMode === "trusted-ingress";
     return { allowed, status: allowed ? 204 : 403 };
   }
   const isApi = req.path === "/api" || req.path.startsWith("/api/");
@@ -97,4 +92,3 @@ export async function verifyGateway(req, config, fetchImpl = fetch) {
     return { allowed: false, status: 503 };
   }
 }
-import { timingSafeEqual } from "node:crypto";

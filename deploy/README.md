@@ -1,16 +1,37 @@
 # CavVoid VPS preparation
 
-**Status:** The VPS paths/network and image builds are confirmed. Gatekeeper's app-list update passed validation and its backend is healthy. CavVoid's first startup was blocked by an incorrect readiness probe despite its server running; the corrected probe is being rolled out. Live acceptance is still pending.
+**Status:** Both services passed VPS health checks after the readiness correction. Shared Caddy validation/restart and the signed-out HTTPS redirect passed. Signed-in access revealed an unnecessary CavVoid secret requirement; this release removes it and uses Fabrice's existing shared `gatekeeper_app` snippet. The updated images and signed-in journey still need VPS verification.
 
 **Domain:** `https://cavvoid.haguma.com` → **Caddy upstream:** `frontend_cavvoid:80`. The backend is `backend_cavvoid:3001` on the app-private network, with no host port. The Compose project is `cavvoid`; its persistent volume is `cavvoid_cavvoid_data`.
 
-**Next:** Pull the readiness fix into `/home/fabrice/Projects/cavvoid`, update the release tag with the existing production-settings helper (it preserves the app proof), and rebuild/recreate only CavVoid. Keep `cavvoid_cavvoid_data`. Continue Caddy validation/application and live tests only once both app services are healthy.
+**Next:** On the VPS, pull and rebuild CavVoid. The `sed` command below removes the obsolete secret and updates the image tag in the existing settings file, preserving the other settings. The data volume is reused.
+
+```sh
+cd /home/fabrice/Projects/cavvoid &&
+git pull --ff-only &&
+sed -i -e '/^CAVVOID_INGRESS_SECRET=/d' \
+  -e "s/^CAVVOID_RELEASE=.*/CAVVOID_RELEASE=$(git rev-parse HEAD)/" \
+  deploy/production.env &&
+docker compose \
+  --env-file deploy/production.env -f compose.production.yaml \
+  up -d --build --wait backend_cavvoid frontend_cavvoid
+```
+
+Keep this site block in the existing shared Caddyfile:
+
+```caddyfile
+cavvoid.haguma.com {
+    import gatekeeper_app frontend_cavvoid:80
+}
+```
+
+Then open `https://cavvoid.haguma.com`, sign in, create a text drop and refresh. With that block already active, the app update needs no Caddy restart. The same update commands work for future releases; deleting the obsolete setting again is harmless. On a new checkout using the default limits/login origin, omit `--env-file deploy/production.env` and prefix Compose with `CAVVOID_RELEASE="$(git rev-parse HEAD)"`; the app needs no production secrets.
 
 ## Confirmed host details and remaining checks
 
 | Item | Evidence/status |
 |---|---|
-| App origin | `https://cavvoid.haguma.com`, supplied by Fabrice; DNS registration reported, live routing not checked |
+| App origin | `https://cavvoid.haguma.com`; HTTPS resolves and redirects unsigned browser navigation to the verified `https://login.haguma.com` |
 | Source repository | `https://github.com/FabHaguma/cavvoid.git`, from this checkout's Git remote |
 | App services | `frontend_cavvoid:80`, `backend_cavvoid:3001`; the supplied VPS inventory showed no existing CavVoid services before the initial creation |
 | Ingress network | `caddy_network` exists; Caddy and Gatekeeper are members in the supplied live inventory |
@@ -18,15 +39,15 @@
 | Caddy | `caddy_proxy`; `/home/fabrice/Projects/caddy/Caddyfile` → `/etc/caddy/Caddyfile`, confirmed by mount inspection |
 | Gateway | `/home/fabrice/Projects/OAuthenticator`; `gatekeeper-backend_gatekeeper-1`, service `backend_gatekeeper:4000`. Its runtime login origin was used to generate CavVoid's private settings; app-list validation/recreation passed |
 | Shared config layout | Change only the CavVoid block in the confirmed shared Caddyfile; keep all other site blocks/imports intact |
-| Runtime | VPS Docker/Compose and both image builds passed. Corrected app startup, Nginx/Caddy validation, ingress isolation, HTTPS and persistence checks remain pending; local Docker was not probed or used |
+| Runtime | Images from `0dc131d` became healthy; Caddy validated/restarted and HTTPS redirected to Gatekeeper. Updated shared-snippet integration, signed-in use, persistence and device checks remain pending; local Docker was not used |
 
 On the intended VPS checkout, the read-only helper collects container names, ports, networks, selected Caddy mounts/version and disk space without dumping environments or Caddyfile secrets:
 
 ```sh
-CAVVOID_VPS_INSPECT=1 CAVVOID_CADDY_CONTAINER=THE_VERIFIED_CONTAINER sh deploy/inspect-vps.sh
+CAVVOID_VPS_INSPECT=1 CAVVOID_CADDY_CONTAINER=caddy_proxy sh deploy/inspect-vps.sh
 ```
 
-`THE_VERIFIED_CONTAINER` is an explicit missing input. Do not paste it unchanged. Use the results to confirm that `frontend_cavvoid` is not already another app's alias on `caddy_network`, and that existing `cavvoid` services/volume, if any, belong to this application. An existing deployment's mounts take precedence over assuming a new empty volume.
+Use the results when investigating service/network ownership. `frontend_cavvoid` and the existing `cavvoid` volume belong to this deployment; preserve them on updates.
 
 ## Package and trust boundary
 
@@ -40,33 +61,33 @@ Browser HTTPS → existing Caddy → Gatekeeper /auth/verify
 
 `Dockerfile` builds the current Vite UI into Nginx and a separate native Node 22 backend. `compose.production.yaml` has uniquely named images with a required release tag, restart policies, health checks, read-only roots, and one persistent `/data` volume. Only Nginx joins `caddy_network`; the backend joins only the project-scoped internal network. There are no published host ports. Keep one backend replica/database writer.
 
-Local development continues verifying the cookie directly with the local gateway. Production instead requires `NODE_ENV=production`, `AUTH_MODE=trusted-ingress`, exact HTTPS app/gateway origins, absolute persistent paths, and a **separate** 64-character lowercase hex `CAVVOID_INGRESS_SECRET`. Caddy overwrites `X-CavVoid-Ingress` with this proof only after Gatekeeper approves. Both Nginx and Node reject missing/incorrect proof, including requests from other containers that reach the shared ingress network. Node still enforces exact Host, fixed owner, expiry, quota and CSRF. Network isolation and correct Caddy ordering remain required; possessing the app proof is not a replacement for the gateway.
+Production authentication belongs to the existing Caddy `gatekeeper_app` snippet. It checks Gatekeeper before forwarding every public request. Nginx serves/proxies the approved request and Node trusts the app-private proxy path; neither requires an extra header or app secret. `NODE_ENV=production`, explicit `AUTH_MODE=trusted-ingress`, exact HTTPS origins and absolute persistent paths remain required. Node enforces exact Host, fixed owner, expiry, quota and CSRF. The shared `caddy_network` is trusted server infrastructure, just as for Fabrice's other private apps: containers attached to it can reach Nginx directly. Do not publish either app port or attach untrusted containers to that network. Local development continues direct verification with the real local Gatekeeper.
 
-Gatekeeper's existing `PROXY_AUTH_SECRET` stays solely in Gatekeeper/Caddy verification configuration. Never put it, the administrator password, or gateway cookies into CavVoid's runtime/build. Caddy redacts the gateway cookie and removes its verification-secret header; Nginx drops cookies and that header before proxying. The app proof is removed before API handlers. The Docker build context excludes `.env`/runtime credentials, data, backups and local QA artifacts.
+Gatekeeper's existing `PROXY_AUTH_SECRET` stays solely in Gatekeeper/Caddy verification configuration. The shared snippet redacts the gateway cookie and removes its proxy-key header. Nginx also drops cookies and that header, and Node ignores caller-supplied identity/forwarding assertions. CavVoid's production settings contain only release/origin/limits; its build and runtime need no authentication credentials. The Docker build context excludes runtime settings, data, backups and local QA artifacts.
 
-Nginx routes `/api/` and `/api/events` before static routes, preserves the full path/query, streams uploads/downloads without proxy caching or disk buffering, and leaves API failures as errors. SSE buffering is off, Caddy flushes immediately, and Node retains its fixed 25-second lifetime. Upload/body limits derive from the same file/text limits plus bounded multipart/JSON overhead; proxy upload inactivity is 20 minutes and backend request timeout 30 minutes. The browser's file request timeout remains 20 minutes. In-progress transfers may finish after session revocation; the next request/stream reconnect is gated again.
+Nginx routes `/api/` and `/api/events` before static routes, preserves the full path/query, streams uploads/downloads without proxy caching or disk buffering, and leaves API failures as errors. Nginx SSE buffering is off and Node retains its fixed 25-second lifetime; verify delivery through the actual shared Caddy snippet on the VPS. Upload/body limits derive from the same file/text limits plus bounded multipart/JSON overhead; proxy upload inactivity is 20 minutes and backend request timeout 30 minutes. The browser's file request timeout remains 20 minutes. In-progress transfers may finish after session revocation; the next request/stream reconnect is gated again.
 
-Only `/`, `/kept` and `/settings` get the SPA index. Unknown files/routes return 404. Manifest MIME, worker scope and the shell marker are set explicitly. Security/no-store headers cover static/error responses; APIs retain their backend headers. Nginx access logs are disabled and error logging is critical-only; the proposed CavVoid Caddy block discards its access log so search queries do not become access-log records. Inspect actual global/proxy logging on the VPS and avoid debug logs or `nginx -T`, which can reveal proof values.
+Only `/`, `/kept` and `/settings` get the SPA index. Unknown files/routes return 404. Manifest MIME, worker scope and the shell marker are set explicitly. Security/no-store headers cover static/error responses; APIs retain their backend headers. Nginx access logs are disabled and error logging is critical-only. Caddy retains the existing shared logging policy; consider search-query privacy there when enabling access/debug logs.
 
 ## Requested rollout — laptop first
 
-These commands are prepared instructions, **not executed deployment**. Fabrice commits/pushes the intended release from the laptop. No commit or push was made by this milestone. Use the existing Git remote and the intended branch. The VPS must receive the exact pushed commit, not just local untracked files.
+Fabrice's workflow is laptop commit/push → SSH → pull/build in `/home/fabrice/Projects/cavvoid`. The initial release and readiness correction were pushed and built on the VPS. Use the short path above for this update, and record the deployed commit for rollback.
 
 On the verified SSH target, use the confirmed CavVoid checkout. For a new folder, clone `https://github.com/FabHaguma/cavvoid.git` into that chosen folder once. For an existing deployment, run the stopped-app backup below and preserve its current runtime file, commit and image IDs **before pulling or changing its release tag**. Then preserve ignored private runtime/data files, use `git pull --ff-only`, and confirm `git rev-parse HEAD` is the intended pushed commit. Do not overwrite an unrelated checkout or discard uncommitted server changes.
 
-From that **confirmed VPS CavVoid folder**, after the gateway origin is verified:
+The verified login origin is `https://login.haguma.com`, which is the Compose default. `deploy/production.env` is optional for release/limit overrides. If using the optional native settings helper on a host with Node 22, it also removes any obsolete app secret automatically:
 
 ```sh
-node scripts/prepare-production.js --gateway-origin https://THE_VERIFIED_LOGIN_HOST --release "$(git rev-parse HEAD)"
+node scripts/prepare-production.js --gateway-origin https://login.haguma.com --release "$(git rev-parse HEAD)"
 docker compose --env-file deploy/production.env -f compose.production.yaml config --quiet
 docker compose --env-file deploy/production.env -f compose.production.yaml build --pull
 ```
 
-The login host above is deliberately unresolved. The helper creates mode-600 `deploy/production.env`, generates only CavVoid's own proof, preserves it and existing limits on later releases, and updates the image tag. It prints no secret and starts no service. Do not run it on a live checkout before preserving the previous runtime file/release tag. For later updates, do not generate a new proof unless coordinating the matching private Caddy change. Review the selected official Node 22/Nginx stable base-image digests on the VPS and record the resulting image IDs alongside the commit for rollback.
+The optional helper writes mode-600 settings, preserves existing limits and updates the image tag. It generates no authentication secret and starts no service. Ordinary updates can set `CAVVOID_RELEASE` in the Compose command instead; no Node installation or settings helper is required on the VPS. Record the resulting image IDs alongside the commit for rollback.
 
 ## Register just CavVoid in the existing gateway
 
-In the **confirmed Gatekeeper checkout/env**, append this one entry to the existing complete `PROTECTED_APPS` JSON array, keeping all current entries and exactly one assignment:
+This registration already passed on the current VPS. For a new installation, append this entry to `PROTECTED_APPS` in `/home/fabrice/Projects/OAuthenticator/backend/.env`, keeping the existing entries:
 
 ```json
 {"id":"cavvoid","name":"CavVoid","url":"https://cavvoid.haguma.com"}
@@ -79,23 +100,23 @@ docker compose --env-file backend/.env -f compose.production.yaml config --quiet
 docker compose --env-file backend/.env -f compose.production.yaml up -d backend_gatekeeper
 ```
 
-Those relative paths/service names are reference commands until the actual host is confirmed. No gateway image rebuild is required for an app-list-only change. This step changes a shared authentication service; preserve all other registered apps and test them afterward. Do not stop the shared gateway to perform a routine CavVoid smoke test.
+These paths/service names are confirmed. No gateway image rebuild is required for an app-list-only change. The current registration needs no further Gatekeeper changes for this CavVoid update.
 
 ## Add only the CavVoid Caddy block
 
-Review [Caddyfile.cavvoid.example](Caddyfile.cavvoid.example). It contains only the affected hostname. Confirm the gateway upstream, then merge this block into the correct actual shared Caddyfile without replacing other sites or adding another login block. If this hostname already exists, edit that one block rather than creating a duplicate.
+Use [Caddyfile.cavvoid.example](Caddyfile.cavvoid.example): it contains only the hostname and `import gatekeeper_app frontend_cavvoid:80`. The existing shared snippet owns `forward_auth`, its proxy key and credential redaction. There is no CavVoid-specific secret, header, snippet parameter or additional login block.
 
-In the **private deployed block**, replace the verification placeholder with the existing Gatekeeper proxy secret, and the app-proof placeholder with the separate value in CavVoid's private runtime file. Reuse an existing Caddy secret/snippet mechanism if the actual layout provides one; never commit either secret. Keep the mounted config and backups private (mode 600 where appropriate). Do not print either file into the chat or run full `docker inspect`/Compose expansion that displays environments.
+The actual shared file is `/home/fabrice/Projects/caddy/Caddyfile`, mounted into `caddy_proxy` at `/etc/caddy/Caddyfile`. Keep other site blocks and the shared `gatekeeper_app` definition intact. If the simple CavVoid import is already active, this application update does not require a Caddy change.
 
 Before the edit, preserve the actual host-side shared config and its imports. Confirm the container sees the changed file (single-file bind mounts can retain an editor-replaced inode). With actual values substituted, validation and the familiar restart method are:
 
 ```sh
-docker exec THE_VERIFIED_CADDY_CONTAINER caddy validate --config /THE/VERIFIED/CONTAINER/CONFIG --adapter caddyfile
+docker exec caddy_proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile &&
 # Only after validation succeeds, and only for the identified Caddy container:
-docker restart THE_VERIFIED_CADDY_CONTAINER
+docker restart caddy_proxy
 ```
 
-These are intentionally marked missing identifiers, not ready-to-run exact commands. A graceful `caddy reload --config ... --adapter caddyfile` in that same container is an optional alternative when its admin API is enabled; it avoids restarting shared ingress. If only the app images change later and routing/proof are unchanged, leave Caddy alone. Runtime validation must happen before any reload/restart; no local parse is a substitute.
+These identifiers are confirmed. A graceful `caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile` in that same container is an optional alternative when its admin API is enabled. Apply shared Caddy configuration only when it changes, after validation succeeds.
 
 ## Start and verify only CavVoid
 
@@ -106,18 +127,18 @@ docker compose --env-file deploy/production.env -f compose.production.yaml up -d
 docker compose --env-file deploy/production.env -f compose.production.yaml ps
 ```
 
-Backend health checks the internal database-ready `/health` with the configured Host; Nginx health checks require its app proof. Public `/health` is not exposed. After both services are healthy, open `https://cavvoid.haguma.com` and verify real sign-in/return, nested routes, manifest/icons, private APIs and main transfers. On failure, inspect only these services first:
+Backend health checks the internal database-ready `/health` with the configured Host; Nginx health checks its internal `/nginx-health` without a secret. Public `/health` is not exposed. After both services are healthy, open `https://cavvoid.haguma.com` and verify real sign-in/return, nested routes, manifest/icons, private APIs and main transfers. On failure, inspect only these services first:
 
 ```sh
 docker compose --env-file deploy/production.env -f compose.production.yaml logs --tail=80 backend_cavvoid frontend_cavvoid
 ```
 
-Do not paste secrets or sensitive requests from logs. For a proxy failure, inspect scoped Caddy logs in the verified container, its network/DNS membership, the precise upstream and the two distinct proof values privately. Do not reset shared networks or restart unrelated services.
+For a proxy failure, inspect scoped Caddy logs, network/DNS membership, the upstream and the shared Gatekeeper snippet. Avoid printing the shared Caddyfile or expanded gateway configuration, which contains its proxy key.
 
 Required live checks still pending:
 
 - Signed-out pages redirect safely; JSON/API/SSE/download requests are denied; unknown/expired/revoked cookies cannot gain new access. Check auth outage through an isolated test or an agreed maintenance window, not by casually stopping the shared gateway.
-- Spoofed identity/forwarding/proof headers cannot bypass Caddy; direct Nginx without the app proof returns 403; backend has no host binding or shared ingress attachment. Verify from the actual external network and Docker topology.
+- Spoofed browser identity/forwarding headers cannot bypass the public Caddy gate or choose an owner. The backend has no host binding or shared ingress attachment. Direct Nginx access from the trusted shared Docker network is permitted by this deployment model; test public access separately.
 - Same-origin text/file flows, quota and retention, image/audio/document downloads/ranges, five clients, notifications under two seconds and stream closure within 30 seconds through the actual proxy.
 - Physical phone ↔ PC, Android/iOS installation/standalone launch, sleep/resume and keyboard; independent browser profiles. Local viewport emulation and HTTP clients do not establish those results.
 - Recreate/restart CavVoid containers, confirm database/files/defaults persist, and test a backup restore to a separate location. Preserve the original instance until the restored copy is checked.
@@ -176,10 +197,12 @@ If a rollout fails, stop further changes. Prefer recreating only CavVoid with th
 
 ### Initial VPS startup correction
 
-Both images built successfully from `acf3d78bc2d6864318a1a5c39326f9cc7e242d72`. Initial startup created the private network/data volume, but Node's `fetch` health check did not preserve the explicit public Host header. The app's Host guard therefore rejected the loopback probe while server logs showed normal startup. `scripts/healthcheck.js` now uses core HTTP to preserve that header, requires the database-ready JSON response, bounds response size/time, and reports safe failure codes. Native regression coverage exercises the actual production Host guard, HTTP failure, invalid readiness data and a stalled response. The public Host guard and authentication remain enforced. Rebuild the backend image with this script; do not remove/reset the data volume or rotate the ingress secret to fix a probe failure.
+Both images built successfully from `acf3d78bc2d6864318a1a5c39326f9cc7e242d72`. The first startup failed because Node's fetch replaced the public Host with loopback. `0dc131d` corrected it with a bounded core-HTTP probe; both VPS containers then became healthy. The actual Caddyfile validated and Caddy restarted; a public HTTPS browser request returned the expected Gatekeeper login redirect. The public Host guard remains enforced.
 
-After this correction, `npm test` passed all 89 native checks on Node 22.15.0. The rebuilt image still needs to pass its actual VPS health check.
+After that correction, `npm test` passed all 89 native checks on Node 22.15.0. Signed-in access then exposed the separate app-secret requirement, while a private frontend request with the old secret succeeded. Fabrice confirmed that all private apps must use the existing one-argument shared Gatekeeper import. This release removes the extra requirement from Nginx, Node, Compose and settings generation. The updated image still needs its actual VPS and signed-in acceptance checks.
 
-Native checks cover the production config/admission boundary without Docker. Both initial image builds and Gatekeeper configuration validation passed on the VPS. The corrected app startup, Nginx `-t`, actual shared Caddy validation/application, TLS/DNS, persistent volume ownership, backend recreation/DNS resolution, private network bypass tests, backup/restore and physical-device checks remain to be verified there during milestone 9.
+For the shared-snippet update, all 89 native checks, the real local Gatekeeper integration test and `npm run build` passed. Production API coverage accepts the trusted proxy request with no credential, keeps the fixed owner despite forged identity headers, rejects incorrect Host/cross-origin mutations, and opens its bounded stream. The real Gateway test covers independent sessions, revocation, logout, expiry and outage. These native tests do not execute the VPS Caddy/Nginx binaries.
+
+Native checks cover the production proxy contract without Docker. Actual shared-snippet behavior, Nginx runtime, persistence, backend recreation/DNS resolution, backup/restore and physical-device checks remain part of VPS acceptance. Earlier image health and unsigned redirects do not establish successful signed-in app use.
 
 Reference behavior follows [Caddy forward authentication](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy proxy header controls](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers), [Nginx path/buffering controls](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [Compose service health/environment settings](https://docs.docker.com/reference/compose-file/services/), and [SQLite WAL persistence](https://www.sqlite.org/wal.html). These sources describe the software contracts, not this VPS's current configuration.

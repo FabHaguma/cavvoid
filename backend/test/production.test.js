@@ -24,13 +24,13 @@ import { prepareProduction } from "../../scripts/prepare-production.js";
 import { verifyData } from "../../scripts/verify-data.js";
 import { probeHealth } from "../../scripts/healthcheck.js";
 import { createServer } from "node:http";
+import { openEventStream } from "./event-client.js";
 
 const environment = {
   NODE_ENV: "production",
   AUTH_MODE: "trusted-ingress",
   APP_ORIGIN: "https://cavvoid.haguma.com",
   GATEKEEPER_URL: "https://login.haguma.com",
-  CAVVOID_INGRESS_SECRET: "ab".repeat(32),
   DATABASE_PATH: path.join(
     os.tmpdir(),
     "cavvoid-unused-production-fixture",
@@ -81,21 +81,18 @@ test("readiness probe preserves the public Host, reports errors and bounds stall
   );
 });
 
-test("production startup requires explicit HTTPS, persistent paths and separate ingress proof", () => {
+test("production startup requires explicit Caddy ingress, HTTPS and persistent paths without app credentials", () => {
   const config = loadConfig(environment);
   assert.equal(config.production, true);
   assert.equal(config.authMode, "trusted-ingress");
   assert.equal(config.host, "0.0.0.0");
   assert.equal(config.port, 3001);
   assert.equal(config.proxySecret, "");
+  assert.equal(config.ingressSecret, undefined);
   assert.equal(config.localGatekeeperRepo, null);
   for (const override of [
     { AUTH_MODE: "local-gateway" },
     { AUTH_MODE: "" },
-    { CAVVOID_INGRESS_SECRET: "" },
-    { CAVVOID_INGRESS_SECRET: "x".repeat(64) },
-    { CAVVOID_INGRESS_SECRET: "ab".repeat(32) + "\n" },
-    { CAVVOID_INGRESS_SECRET: '"; injection' },
     { GATEKEEPER_PROXY_SECRET: "private-gateway-secret-".repeat(3) },
     { LOCAL_GATEKEEPER_REPO: "./gateway" },
     { APP_ORIGIN: "http://cavvoid.haguma.com" },
@@ -124,7 +121,7 @@ test("production startup requires explicit HTTPS, persistent paths and separate 
   );
 });
 
-test("production runtime preparation preserves existing proof/limits and rejects unsafe updates before writing", () => {
+test("optional runtime preparation removes the obsolete secret, preserves limits and rejects unsafe updates", () => {
   const directory = mkdtempSync(
     path.join(os.tmpdir(), "cavvoid-production-env-"),
   );
@@ -137,9 +134,10 @@ test("production runtime preparation preserves existing proof/limits and rejects
     };
     assert.equal(prepareProduction(options).created, true);
     const first = parseEnv(readFileSync(filename, "utf8"));
-    assert.match(first.CAVVOID_INGRESS_SECRET, /^[a-f0-9]{64}$/);
+    assert.equal(first.CAVVOID_INGRESS_SECRET, undefined);
     assert.equal(first.PROXY_AUTH_SECRET, undefined);
     first.MAX_FILE_BYTES = "12345";
+    first.CAVVOID_INGRESS_SECRET = "ab".repeat(32);
     writeFileSync(
       filename,
       Object.entries(first)
@@ -151,7 +149,7 @@ test("production runtime preparation preserves existing proof/limits and rejects
       false,
     );
     const next = parseEnv(readFileSync(filename, "utf8"));
-    assert.equal(next.CAVVOID_INGRESS_SECRET, first.CAVVOID_INGRESS_SECRET);
+    assert.equal(next.CAVVOID_INGRESS_SECRET, undefined);
     assert.equal(next.MAX_FILE_BYTES, "12345");
     assert.equal(next.CAVVOID_RELEASE, "b".repeat(40));
     const before = readFileSync(filename, "utf8");
@@ -241,7 +239,7 @@ test("offline restore verification checks database/ledger/file bytes without mig
   }
 });
 
-test("production APIs reject direct/forged admission, keep CSRF and never consume gateway credentials", async (t) => {
+test("production uses shared Caddy authentication without an app secret and preserves owner, Host, CSRF and stream checks", async (t) => {
   const config = { ...loadConfig(environment), filesDirectory: null };
   const database = openDatabase(":memory:", "Production fixture");
   const instance = createApp({
@@ -267,32 +265,32 @@ test("production APIs reject direct/forged admission, keep CSRF and never consum
     {
       "X-Forwarded-Proto": "https",
       "X-Forwarded-Host": config.appHost,
-      "X-User-Id": "owner",
+      "X-User-Id": "attacker",
+      "X-Auth-Request-User": "attacker",
     },
     { Cookie: "gatekeeper_session=fake-session" },
     { "X-Gatekeeper-Proxy-Key": "ab".repeat(32) },
     { "X-CavVoid-Ingress": "cd".repeat(32) },
-    { "X-CavVoid-Ingress": environment.CAVVOID_INGRESS_SECRET + ",fake" },
-  ])
-    for (const url of [
-      "/api/auth/me",
-      "/api/items",
-      "/api/events",
-      "/api/storage",
-      "/api/preferences",
-      "/settings",
-      "/sw.js",
-    ])
-      assert.equal((await request(url, { headers })).status, 403, url);
-  const headers = { "X-CavVoid-Ingress": environment.CAVVOID_INGRESS_SECRET };
-  const access = await request("/api/auth/me", { headers });
-  assert.equal(access.status, 200);
-  assert.equal(access.json().owner.id, "owner");
-  assert.doesNotMatch(access.text, /abababab|Proxy-Key|gatekeeper_session/);
+  ]) {
+    const access = await request("/api/auth/me", { headers });
+    assert.equal(access.status, 200);
+    assert.equal(access.json().owner.id, "owner");
+    assert.doesNotMatch(
+      access.text,
+      /abababab|Proxy-Key|gatekeeper_session|attacker/,
+    );
+  }
+  for (const url of ["/api/items", "/api/storage", "/api/preferences"])
+    assert.equal((await request(url)).status, 200, url);
+  const stream = await openEventStream(server, config.appHost);
+  assert.equal(stream.status, 200);
+  await stream.waitFor("sync.ready");
+  stream.close();
+  await stream.closed;
   assert.equal(
     (
       await request("/api/items", {
-        headers: { ...headers, Host: "attacker.example" },
+        headers: { Host: "attacker.example" },
       })
     ).status,
     421,
@@ -302,7 +300,6 @@ test("production APIs reject direct/forged admission, keep CSRF and never consum
     submissionId: randomUUID(),
   });
   const mutation = {
-    ...headers,
     Origin: config.appOrigin,
     "X-CavVoid-Request": "1",
     "Content-Type": "application/json",
@@ -334,10 +331,12 @@ test("production APIs reject direct/forged admission, keep CSRF and never consum
   });
   assert.equal(created.status, 201);
   assert.equal(
-    (await request("/api/items/" + created.json().item.id, { headers })).status,
+    (await request("/api/items/" + created.json().item.id)).status,
     200,
   );
   // In production only Nginx serves the UI; backend admission cannot expose files.
-  assert.equal((await request("/settings", { headers })).status, 404);
-  assert.equal((await request("/sw.js", { headers })).status, 404);
+  assert.equal((await request("/settings")).status, 404);
+  assert.equal((await request("/sw.js")).status, 404);
+  config.authMode = "local-gateway";
+  assert.equal((await request("/api/auth/me")).status, 403);
 });

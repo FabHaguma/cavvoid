@@ -2,11 +2,11 @@
 
 **Updated:** 2026-11-14\
 **Source:** [PRD v1.1](cavvoid-prd.md)\
-**Current state:** Milestones 1–7 complete locally. The milestone 8 package now has confirmed VPS paths/network and successful image builds. The guided milestone 9 rollout is in progress: Gatekeeper is healthy, and CavVoid's incorrect readiness probe is being corrected before retrying startup. Live application acceptance and physical-device checks remain pending.
+**Current state:** Milestones 1–7 complete locally; milestone 8 paths/builds are confirmed. During the guided milestone 9 rollout, both CavVoid services became healthy and Caddy validation/unsigned HTTPS redirect passed. Signed-in access exposed an unwanted per-app secret requirement. This release removes it to match Fabrice's existing shared `gatekeeper_app` snippet; updated live acceptance and device checks remain pending.
 
 ## Start here
 
-Continue the guided VPS rollout using the confirmed [deployment details](deploy/README.md). Apply the readiness correction without removing the data volume or changing the existing app proof, then verify actual app health before applying Caddy and testing the live site.
+Continue using the short [VPS update path](deploy/README.md). Keep `cavvoid.haguma.com { import gatekeeper_app frontend_cavvoid:80 }`; pull/build the app update and remove the obsolete generated secret. Then check sign-in and a text drop. Existing data is reused, and the shared snippet needs no CavVoid-specific change.
 
 Implement one milestone per request. At the end, show the working preview or prepared files, say what was actually verified, update the status below, and stop with: **"Milestone N complete. Tell me 'Implement milestone N+1' when you are ready."** Do not begin the next milestone automatically. If required checks fail, finish the current milestone or report its specific blocker without claiming it is complete.
 
@@ -22,7 +22,7 @@ Milestone 8 prepares deployment files. Milestone 9 performs deployment and needs
 | 6 | Mobile PWA and offline behavior | 5 | Complete — 2026-11-14 |
 | 7 | Search, settings, and local release checks | 6 | Complete locally — 2026-11-14; release limits recorded below |
 | 8 | VPS deployment package and handoff | 7 | Package/host paths confirmed; VPS image builds passed |
-| 9 | Requested deployment and live acceptance | 8 + deployment request | Guided rollout in progress; readiness correction awaiting VPS retry |
+| 9 | Requested deployment and live acceptance | 8 + deployment request | Guided rollout in progress; shared-snippet compatibility awaiting VPS retry |
 
 ## Integration decisions
 
@@ -30,7 +30,7 @@ Milestone 8 prepares deployment files. Milestone 9 performs deployment and needs
 - Keep the PRD's existing React/Vite, Node.js/Express, SQLite/WAL, private filesystem, and SSE choices. This revision changes authentication and delivery sequencing; it does not migrate the proposed frontend stack.
 - Keep folders simple: `frontend/` with public assets in `frontend/assets/`, `backend/`, and deployment files only when milestone 8 needs them. Keep SQLite, uploads, temporary files, secrets, and backups outside the public frontend and out of Git.
 - Use native Node.js and a local `npm run dev` entry point. Bind local services to loopback. Use the real local Gatekeeper for the sign-in demonstration and disposable databases for tests; do not depend on the VPS or local Docker.
-- Prepared production path: browser → existing Caddy with Gatekeeper verification → `frontend_cavvoid:80` → `backend_cavvoid:3001` on an app-private network. These names/ports are selected in the package; local configuration search found no competing definition, and live conflict confirmation is pending before applying it. Caddy overwrites a separate app proof after approval; Nginx/Node validate it, and gateway cookies/proxy credentials do not enter CavVoid.
+- Production path: browser → existing shared Caddy `gatekeeper_app` import → `frontend_cavvoid:80` → `backend_cavvoid:3001` on an app-private network. The VPS confirmed the names/ports and both services became healthy. Use the exact one-argument snippet already used for other private apps. No per-app authentication secret/header is required; the shared ingress network is trusted, ports stay unpublished, and gateway credentials are stripped before app handlers.
 - Gatekeeper currently returns `204` or an error from `/auth/verify`, with no owner identity header. Assign the same fixed local owner on the server after the trusted boundary admits the request. Keep `items.user_id` and preferences, but never accept an owner ID from the browser.
 - Gatekeeper owns its password, login throttling, cookie, session expiry, and session dashboard. CavVoid's Settings opens that dashboard for sign-out/revocation. Explain that this also affects other apps sharing that gateway session. Signing out all devices means revoking other sessions and then signing out the current one there.
 - CavVoid still owns authorization of item operations, safe previews, expiration enforcement, and CSRF protection. Require the exact configured CavVoid Origin plus an application-specific header on mutations, including multipart uploads; reject cross-origin browser access.
@@ -269,3 +269,11 @@ At each milestone handoff, update its status and append a short record here with
 - Fabrice requested commit/push and began the guided VPS rollout. Release `acf3d78bc2d6864318a1a5c39326f9cc7e242d72` was pushed to `main`, cloned into `/home/fabrice/Projects/cavvoid`, and both images built successfully. The live inventory confirmed Caddy/Gatekeeper on `caddy_network`, with no CavVoid services before creation.
 - Confirmed Caddy container/mount: `caddy_proxy`, `/home/fabrice/Projects/caddy/Caddyfile` → `/etc/caddy/Caddyfile`. Gateway checkout: `/home/fabrice/Projects/OAuthenticator`. The existing Gatekeeper app-list update passed native configuration validation in its image, and its backend returned healthy.
 - Initial CavVoid startup created its scoped network/data volume. Backend logs showed normal server startup, but its health probe failed. Native reproduction showed Node fetch replacing the configured Host with loopback; the protected public-host guard returned an error to the probe. Switched to a bounded core-HTTP readiness script and added a production-guard regression test. No authentication bypass, volume reset or secret rotation is required. Application health through the corrected image and subsequent live/device acceptance remain pending.
+
+### Shared Gatekeeper snippet correction — 2026-11-14
+
+- Both `0dc131d` images became healthy on the VPS. The real Caddyfile validated, `caddy_proxy` restarted, and unauthenticated HTTPS navigation redirected to Gatekeeper. Signed-in access returned Nginx 403; the frontend served correctly with the old app-specific header.
+- Fabrice explicitly requires the shared `gatekeeper_app` snippet used by his other private apps: `cavvoid.haguma.com { import gatekeeper_app frontend_cavvoid:80 }`. This supersedes milestone 8's separate app-proof design and its associated Caddy instructions. The pasted Gateway key was redacted, not a production credential.
+- Removed app-secret generation/validation and the header requirement from production Node, Nginx, Compose and deployment examples. Optional settings migration removes the old field and preserves limits. The PRD and active handoff now use the shared snippet; the historical milestone records above describe earlier implementations.
+- Production trusts the existing Caddy Gatekeeper boundary and trusted shared Docker ingress network. Only Nginx joins that network; the backend remains private with no host ports. Fixed-owner selection, exact Host, CSRF, safe file handling and bounded SSE remain. Local development still verifies against the real local Gatekeeper.
+- Validation passed: 89 native checks, one real local Gatekeeper integration test (independent sessions, revocation, logout, expiry and outage), and frontend production build. Updated image runtime and signed-in live acceptance remain pending on the VPS; no local Docker was used.
