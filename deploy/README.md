@@ -1,10 +1,10 @@
 # CavVoid VPS preparation
 
-**Status:** Android Share Target support is implemented and tested locally (97 checks, production build, real Chrome handoff/composer checks with mocked sign-in). Deploy this update, then install/reinstall from Chrome on Android and check **Share → CavVoid**. The existing shared `gatekeeper_app` integration needs no change. Physical Android and updated live acceptance remain pending; previous VPS image health, Caddy validation and unsigned HTTPS redirect already passed.
+**Status:** The phone file-picker reset is fixed locally: returning from the picker now retains the composer and selected files while access is rechecked. The production build and 100 automated checks pass; local Chrome phone/desktop checks completed real disposable image uploads and verified exact preview/download bytes with mocked sign-in. Deploy this update, reload online, and check **New drop → Files & media → Choose files → Upload files** on the phone. This flow needs no installation or reinstall. The existing shared `gatekeeper_app` integration needs no change. Physical Android/iOS and updated live acceptance remain pending; previous VPS image health, Caddy validation and unsigned HTTPS redirect already passed.
 
 **Domain:** `https://cavvoid.haguma.com` → **Caddy upstream:** `frontend_cavvoid:80`. The backend is `backend_cavvoid:3001` on the app-private network, with no host port. The Compose project is `cavvoid`; its persistent volume is `cavvoid_cavvoid_data`.
 
-**Next:** On the VPS, pull and rebuild CavVoid. The `sed` command below removes the obsolete secret and updates the image tag in the existing settings file, preserving the other settings. The data volume is reused.
+**Next:** After committing and pushing the fix from the laptop, connect by SSH and run the following in the existing VPS checkout. The `sed` command removes the obsolete secret and updates the image tag in the existing settings file, preserving the other settings. The data volume is reused.
 
 ```sh
 cd /home/fabrice/Projects/cavvoid &&
@@ -27,7 +27,9 @@ cavvoid.haguma.com {
 
 Then open `https://cavvoid.haguma.com`, sign in, create a text drop and refresh. With that block already active, the app update needs no Caddy restart. The same update commands work for future releases; deleting the obsolete setting again is harmless. On a new checkout using the default limits/login origin, omit `--env-file deploy/production.env` and prefix Compose with `CAVVOID_RELEASE="$(git rev-parse HEAD)"`; the app needs no production secrets.
 
-For Android sharing, open the updated site in Chrome, sign in and install CavVoid using **Install app**. If already installed, open the app and accept **Update & reload** when shown. If Android's Share menu still lacks CavVoid, remove/reinstall the old PWA from Chrome to register the new share-target manifest. Then share a link from Chrome or a photo/file from another app → **CavVoid**, review it, and send. Installation/manifest behavior follows [Chrome's Web Share Target documentation](https://developer.chrome.com/docs/capabilities/web-apis/web-share-target). Server data stays in the existing VPS volume.
+For this phone-picker fix, close any unfinished composer, refresh CavVoid online, and accept **Update & reload** when shown. Test choosing a photo inside CavVoid before closing the composer; its filename should remain visible with **Ready to upload**, and **Upload files** should complete the transfer. No reinstall is required for this fix.
+
+For the separate Android Share menu feature, open the updated site in Chrome, sign in and install CavVoid using **Install app**. If Android's Share menu still lacks CavVoid, remove/reinstall the old PWA from Chrome to register the new share-target manifest. Then share a link from Chrome or a photo/file from another app → **CavVoid**, review it, and send. Installation/manifest behavior follows [Chrome's Web Share Target documentation](https://developer.chrome.com/docs/capabilities/web-apis/web-share-target). Server data stays in the existing VPS volume.
 
 ## Confirmed host details and remaining checks
 

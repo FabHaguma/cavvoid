@@ -4,7 +4,9 @@ import { flushSync } from "react-dom";
 import { AccessError, getAccess, getPreferences } from "./api.js";
 import { StorageSettings } from "./settings.jsx";
 import { DropDialog, TransferFeed } from "./transfers.jsx";
+import { clipboardContent } from "./clipboard.js";
 import { startLiveSync } from "./live-sync.js";
+import { watchAccessLifecycle } from "./access-lifecycle.js";
 import { watchPwa } from "./pwa.js";
 import { PwaPanel } from "./pwa.jsx";
 import { expireShares, receiveShare } from "./share-target.js";
@@ -144,14 +146,9 @@ function App() {
   const [access, setAccess] = useState(null);
   const [preferences, setPreferences] = useState({ defaultExpiration: "24h" });
   const [error, setError] = useState(null);
-  const [dropOpen, setDropOpen] = useState(false);
-  const [droppedFiles, setDroppedFiles] = useState([]);
-  const [droppedText, setDroppedText] = useState("");
-  const openDrop = () => {
-    setDroppedFiles([]);
-    setDroppedText("");
-    setDropOpen(true);
-  };
+  const [drop, setDrop] = useState(null);
+  const dropOpen = Boolean(drop);
+  const openDrop = () => setDrop({});
   const [retryKey, setRetryKey] = useState(0);
   const [feedVersion, setFeedVersion] = useState(0);
   const [feedback, setFeedback] = useState("");
@@ -167,10 +164,8 @@ function App() {
     accessEpoch.current++;
     live.current?.stop();
     setAccess(null);
-    setDroppedFiles([]);
-    setDroppedText("");
     incomingRead.current = null;
-    setDropOpen(false);
+    setDrop(null);
     setError(err);
     return true;
   }, []);
@@ -181,6 +176,23 @@ function App() {
         ? "kept"
         : "void";
   const hasAccess = Boolean(access);
+  useEffect(() => {
+    if (!hasAccess || dropOpen) return;
+    function onPaste(event) {
+      const target = event.target;
+      if (
+        event.defaultPrevented ||
+        target.isContentEditable ||
+        target.closest?.("input, textarea, dialog")
+      ) return;
+      const content = clipboardContent(event.clipboardData);
+      if (!content.files.length && !content.text) return;
+      event.preventDefault();
+      setDrop({ ...content, autoUpload: true });
+    }
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [hasAccess, dropOpen]);
   useEffect(() => {
     expireShares().catch(() => {});
   }, []);
@@ -203,11 +215,7 @@ function App() {
         url.pathname + url.search + url.hash,
       );
       if (draft.message) setFeedback(draft.message);
-      else {
-        setDroppedText(draft.text);
-        setDroppedFiles(draft.files);
-        setDropOpen(true);
-      }
+      else setDrop({ text: draft.text, files: draft.files });
     });
     return () => {
       active = false;
@@ -254,13 +262,14 @@ function App() {
     async function check() {
       controller?.abort();
       clearTimeout(retryTimer);
-      controller = new AbortController();
+      const request = new AbortController();
+      controller = request;
       const epoch = accessEpoch.current;
       try {
         if (navigator.onLine === false)
           throw new AccessError(0, "You’re offline.", undefined, "offline");
-        const result = await getAccess(controller.signal);
-        if (active && epoch === accessEpoch.current) {
+        const result = await getAccess(request.signal);
+        if (active && !request.signal.aborted && epoch === accessEpoch.current) {
           setAccess(result);
           setPreferences(result.preferences || { defaultExpiration: "24h" });
           setError(null);
@@ -270,14 +279,13 @@ function App() {
       } catch (err) {
         if (
           active &&
+          !request.signal.aborted &&
           epoch === accessEpoch.current &&
           err.name !== "AbortError"
         ) {
           setAccess(null);
-          setDroppedFiles([]);
-          setDroppedText("");
           incomingRead.current = null;
-          setDropOpen(false);
+          setDrop(null);
           setError(err);
           if (
             ["network_unavailable", "gateway_unavailable"].includes(err.code) &&
@@ -290,12 +298,6 @@ function App() {
         }
       }
     }
-    const resume = () => {
-      if (document.visibilityState === "visible") {
-        hide();
-        check();
-      }
-    };
     const hide = () => {
       controller?.abort();
       clearTimeout(retryTimer);
@@ -303,10 +305,8 @@ function App() {
       live.current?.stop();
       flushSync(() => {
         setAccess(null);
-        setDroppedFiles([]);
-        setDroppedText("");
         incomingRead.current = null;
-        setDropOpen(false);
+        setDrop(null);
       });
     };
     const offline = () => {
@@ -316,22 +316,12 @@ function App() {
       setError(new AccessError(0, "You’re offline.", undefined, "offline"));
     };
     check();
-    window.addEventListener("focus", check);
-    window.addEventListener("pageshow", check);
-    window.addEventListener("pagehide", hide);
-    window.addEventListener("online", check);
-    window.addEventListener("offline", offline);
-    document.addEventListener("visibilitychange", resume);
+    const stopWatching = watchAccessLifecycle({ check, hide, offline });
     return () => {
       active = false;
       controller?.abort();
       clearTimeout(retryTimer);
-      window.removeEventListener("focus", check);
-      window.removeEventListener("pageshow", check);
-      window.removeEventListener("pagehide", hide);
-      window.removeEventListener("online", check);
-      window.removeEventListener("offline", offline);
-      document.removeEventListener("visibilitychange", resume);
+      stopWatching();
     };
   }, [retryKey]);
   useEffect(() => {
@@ -368,10 +358,8 @@ function App() {
     accessEpoch.current++;
     flushSync(() => {
       setAccess(null);
-      setDroppedFiles([]);
-      setDroppedText("");
       incomingRead.current = null;
-      setDropOpen(false);
+      setDrop(null);
     });
     window.location.assign(url);
   };
@@ -407,6 +395,7 @@ function App() {
   return (
     <div
       className="app-shell"
+      data-section={section}
       onDragOver={(event) => {
         if (Array.from(event.dataTransfer.types).includes("Files"))
           event.preventDefault();
@@ -414,10 +403,8 @@ function App() {
       onDrop={(event) => {
         if (event.dataTransfer.files.length) {
           event.preventDefault();
-          if (!dropOpen) {
-            setDroppedText("");
-            setDroppedFiles(Array.from(event.dataTransfer.files));
-            setDropOpen(true);
+          if (!dropOpen && !event.target.closest?.("dialog")) {
+            setDrop({ files: Array.from(event.dataTransfer.files), autoUpload: true });
           }
         }
       }}
@@ -632,15 +619,12 @@ function App() {
       <DropDialog
         open={dropOpen}
         defaultExpiration={preferences.defaultExpiration}
-        onClose={() => {
-          setDroppedFiles([]);
-          setDroppedText("");
-          setDropOpen(false);
-        }}
+        onClose={() => setDrop(null)}
         maxBytes={access.limits?.maxTextBytes}
         fileLimits={access.limits}
-        initialFiles={droppedFiles}
-        initialText={droppedText}
+        initialFiles={drop?.files}
+        initialText={drop?.text}
+        autoUpload={drop?.autoUpload}
         onAccessError={handleApiError}
         onSaved={(item) => {
           setFeedVersion((value) => value + 1);

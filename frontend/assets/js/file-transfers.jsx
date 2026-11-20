@@ -1,12 +1,36 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "./icons.jsx";
 import { uploadFile } from "./upload.js";
 import { formatBytes } from "../../../shared/file-types.js";
 import { KeepButton, RetentionStatus } from "./retention.jsx";
 import { getItem } from "./api.js";
 
+function uploadRows(files, maxFileBytes, autoUpload = false, retention) {
+  return Array.from(files, (file) => {
+    const tooLarge = file.size > maxFileBytes;
+    return {
+      id: crypto.randomUUID(),
+      file,
+      progress: 0,
+      status: tooLarge ? "too-large" : "queued",
+      error: tooLarge ? `Larger than ${formatBytes(maxFileBytes)}.` : "",
+      autoUpload: autoUpload && !tooLarge,
+      retention,
+    };
+  });
+}
+
 export function UploadPanel({
+  ref,
   initialFiles = [],
+  autoUpload = false,
+  initialRetention,
   maxFileBytes = 104857600,
   quotaBytes = 2147483648,
   onBusy,
@@ -16,16 +40,7 @@ export function UploadPanel({
   retention = "24h",
 }) {
   const [queue, setQueue] = useState(() =>
-    Array.from(initialFiles).map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      progress: 0,
-      status: file.size > maxFileBytes ? "too-large" : "queued",
-      error:
-        file.size > maxFileBytes
-          ? `Larger than ${formatBytes(maxFileBytes)}.`
-          : "",
-    })),
+    uploadRows(initialFiles, maxFileBytes, autoUpload, autoUpload ? initialRetention : undefined),
   );
   const [running, setRunning] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -42,36 +57,34 @@ export function UploadPanel({
       onBusy(false);
     };
   }, []);
-  function add(files) {
-    setQueue((previous) => [
-      ...previous,
-      ...Array.from(files).map((file) => ({
-        id: crypto.randomUUID(),
-        file,
-        progress: 0,
-        status: file.size > maxFileBytes ? "too-large" : "queued",
-        error:
-          file.size > maxFileBytes
-            ? `Larger than ${formatBytes(maxFileBytes)}.`
-            : "",
-      })),
-    ]);
+  function add(files, automatic = false) {
+    const rows = uploadRows(files, maxFileBytes, automatic, automatic ? retention : undefined);
+    if (!rows.length) return;
+    setQueue((previous) => [...previous, ...rows]);
     setNotice("");
   }
+  useImperativeHandle(ref, () => ({
+    upload(files) {
+      add(files, true);
+    },
+    hasPending() {
+      return queue.some((row) => row.status !== "uploaded");
+    },
+  }));
   const update = (id, patch) => {
     if (mounted.current)
       setQueue((previous) =>
         previous.map((row) => (row.id === id ? { ...row, ...patch } : row)),
       );
   };
-  async function send() {
-    if (inFlight.current) return;
-    const pending = queue.filter(
-      (row) =>
-        ["queued", "failed", "cancelled"].includes(row.status) &&
-        row.file.size <= maxFileBytes,
+  async function send(pending) {
+    if (inFlight.current || !pending.length) return;
+    const ids = new Set(pending.map((row) => row.id));
+    setQueue((previous) =>
+      previous.map((row) => ids.has(row.id) && row.autoUpload
+        ? { ...row, autoUpload: false }
+        : row),
     );
-    if (!pending.length) return;
     inFlight.current = true;
     stop.current = false;
     setRunning(true);
@@ -99,6 +112,7 @@ export function UploadPanel({
           saved++;
           savedItem = result.item;
         } catch (error) {
+          if (!mounted.current) break;
           if (onAccessError(error)) {
             stop.current = true;
             for (const request of active.current.values()) request.abort();
@@ -129,7 +143,20 @@ export function UploadPanel({
       }
     }
   }
-  const pending = queue.some(
+  const startAutomaticUploads = useEffectEvent(() => {
+    send(queue.filter((row) => row.autoUpload));
+  });
+  useEffect(() => {
+    if (running || !queue.some((row) => row.autoUpload)) return;
+    let current = true;
+    queueMicrotask(() => {
+      if (current) startAutomaticUploads();
+    });
+    return () => {
+      current = false;
+    };
+  }, [queue, running]);
+  const pending = queue.filter(
     (row) =>
       ["queued", "failed", "cancelled"].includes(row.status) &&
       row.file.size <= maxFileBytes,
@@ -139,21 +166,15 @@ export function UploadPanel({
       <div
         className={`file-dropzone ${dragging ? "dragging" : ""}`}
         onDragOver={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setDragging(true);
+          if (Array.from(event.dataTransfer.types).includes("Files"))
+            setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setDragging(false);
-          if (!running) add(event.dataTransfer.files);
-        }}
+        onDrop={() => setDragging(false)}
       >
         <Icon name="file" size={34} />
         <strong>Give your files a place to land.</strong>
-        <p>Drag files here, or choose from this device.</p>
+        <p>Dragged files upload automatically.</p>
         <label
           className={`button secondary file-picker ${running ? "disabled" : ""}`}
           htmlFor="file-picker"
@@ -193,7 +214,7 @@ export function UploadPanel({
                           ? "Saving…"
                           : `Uploading ${row.progress}%`
                         : row.status === "queued"
-                          ? "Ready to upload"
+                          ? row.autoUpload ? "Queued" : "Ready to upload"
                           : row.status === "too-large"
                             ? "Too large"
                             : row.status === "cancelled"
@@ -255,6 +276,9 @@ export function UploadPanel({
             className="button secondary"
             onClick={() => {
               stop.current = true;
+              setQueue((previous) =>
+                previous.map((row) => row.autoUpload ? { ...row, autoUpload: false } : row),
+              );
               for (const request of active.current.values()) request.abort();
             }}
           >
@@ -267,8 +291,8 @@ export function UploadPanel({
         )}
         <button
           className="button primary"
-          disabled={running || !pending}
-          onClick={send}
+          disabled={running || !pending.length}
+          onClick={() => send(pending)}
         >
           {running
             ? "Uploading…"

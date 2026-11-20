@@ -1,0 +1,65 @@
+:root {
+  /* Dark surfaces and readable neutral text */
+  /* Match the canvas in index.html and manifest.webmanifest for browser chrome. */
+  --canvas: #0c0c12;
+  --sidebar-start: #141720;
+  --sidebar-end: #10121a;
+  --surface: #171b26;
+  --surface-low: #12151e;
+  --surface-raised: #222838;
+  --field: #10131d;
+  --field-border: #606e86;
+  --text: #f0f2fa;
+  --soft: #cbd2e1;
+  --muted: #a6b0c4;
+  --subtle: #929eb4;
+
+  /* Accents for notes, links, files, and kept items */
+  --accent: #c4b3ef;
+  --accent-hover: #e0d6fb;
+  --link: #a6c3ef;
+  --link-hover: #c9dcff;
+  --media: #9acbbf;
+  --kept: #dac099;
+  --success: #a5c9ac;
+  --warning: #d2b177;
+  --danger: #efadb8;
+  --focus: #bbcef5;
+
+  /* Filled actions */
+  --on-action: #faf8ff;
+  --action-start: #66558f;
+  --action-end: #495a88;
+  --danger-action: #893f54;
+
+  /* Shared overlays and decorative finishes */
+  --border: color-mix(in srgb, var(--text) 9%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 14%, transparent);
+  --wash: color-mix(in srgb, var(--text) 4%, transparent);
+  --hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --shadow-soft: #0003;
+  --shadow: #0006;
+  --shadow-deep: #0008;
+  --backdrop: #060710ba;
+  --preview: #080a0f;
+  --mobile-surface: color-mix(in srgb, var(--sidebar-end) 96%, transparent);
+  --dialog-start: color-mix(in srgb, var(--accent) 11%, var(--surface));
+  --void-ring: conic-gradient(
+    from 80deg,
+    var(--surface-raised),
+    var(--link),
+    var(--action-end),
+    var(--canvas),
+    var(--accent),
+    var(--surface-raised)
+  );
+  --kept-ring: conic-gradient(
+    from 80deg,
+    var(--surface-raised),
+    var(--kept),
+    var(--action-start),
+    var(--canvas),
+    var(--accent),
+    var(--surface-raised)
+  );
+}

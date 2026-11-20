@@ -7,7 +7,7 @@ import {
   saveText,
   updateRetention,
 } from "./api.js";
-import { copyText, pasteText } from "./clipboard.js";
+import { clipboardContent, copyText, readClipboard } from "./clipboard.js";
 import { safeLink, textBytes, textParts } from "../../../shared/text.js";
 import { FileCard, FileContent, UploadPanel } from "./file-transfers.jsx";
 import { KeepButton, RetentionSelect, RetentionStatus } from "./retention.jsx";
@@ -32,6 +32,9 @@ function Modal({
   className = "",
   busy = false,
   returnFocus,
+  onPaste,
+  onDragOver,
+  onDrop,
 }) {
   const ref = useRef();
   const opener = useRef();
@@ -52,6 +55,9 @@ function Modal({
       ref={ref}
       className={`drop-dialog ${className}`}
       aria-labelledby={titleId}
+      onPaste={onPaste}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) onClose();
@@ -81,6 +87,7 @@ export function DropDialog({
   fileLimits = {},
   initialFiles = [],
   initialText = "",
+  autoUpload = false,
   defaultExpiration = "24h",
 }) {
   const [mode, setMode] = useState("text");
@@ -92,6 +99,9 @@ export function DropDialog({
   const [saving, setSaving] = useState(false);
   const [pasting, setPasting] = useState(false);
   const input = useRef();
+  const pasteButton = useRef();
+  const uploads = useRef();
+  const clipboardRequest = useRef();
   const submission = useRef("");
   const inFlight = useRef(false);
   useEffect(() => {
@@ -101,40 +111,83 @@ export function DropDialog({
       setText(initialText);
       setError("");
       setNotice("");
+      setPasting(false);
       submission.current = crypto.randomUUID();
-      requestAnimationFrame(() =>
-        input.current?.focus({ preventScroll: true }),
-      );
     }
+    return () => {
+      clipboardRequest.current = null;
+    };
   }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      (mode === "text" ? input.current : pasteButton.current)?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, mode]);
   const bytes = textBytes(text);
   const change = (value) => {
     setText(value);
     setError("");
     submission.current = crypto.randomUUID();
   };
+  function uploadFiles(files) {
+    setNotice("");
+    setMode("files");
+    uploads.current?.upload(files);
+  }
+  function useClipboardContent({ files, text: value }) {
+    if (files.length) {
+      uploadFiles(files);
+    } else if (value) {
+      change(value);
+      setMode("text");
+      input.current?.focus();
+    } else {
+      setNotice("The clipboard has no image, text, or link to paste.");
+    }
+  }
+  function onPaste(event) {
+    const content = clipboardContent(event.clipboardData);
+    if (saving || (!content.files.length && !content.text)) return;
+    clipboardRequest.current = null;
+    setPasting(false);
+    setNotice("");
+    if (
+      !content.files.length &&
+      event.target === input.current &&
+      event.clipboardData.getData("text/plain")
+    ) return;
+    event.preventDefault();
+    useClipboardContent(content);
+  }
   async function paste() {
+    const request = {};
+    clipboardRequest.current = request;
     setPasting(true);
     setNotice("");
     try {
-      change(await pasteText());
+      const content = await readClipboard();
+      if (clipboardRequest.current === request) useClipboardContent(content);
     } catch (err) {
-      setNotice(err.message);
+      if (clipboardRequest.current === request) setNotice(err.message);
     } finally {
-      setPasting(false);
-      input.current?.focus();
+      if (clipboardRequest.current === request) {
+        clipboardRequest.current = null;
+        setPasting(false);
+      }
     }
   }
   async function submit(event) {
     event.preventDefault();
-    if (inFlight.current || pasting || !text.trim() || bytes > maxBytes) return;
+    if (inFlight.current || uploading || pasting || !text.trim() || bytes > maxBytes) return;
     inFlight.current = true;
     setSaving(true);
     setError("");
     try {
       const result = await saveText(text, submission.current, retention);
       onSaved(result.item);
-      if (initialFiles.length && initialText) {
+      if (uploads.current?.hasPending()) {
         setText("");
         setMode("files");
         submission.current = crypto.randomUUID();
@@ -153,11 +206,22 @@ export function DropDialog({
       titleId="drop-title"
       className="composer-dialog"
       busy={saving || uploading}
+      onPaste={onPaste}
+      onDragOver={(event) => {
+        if (Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer.files);
+        if (!files.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!saving) uploadFiles(files);
+      }}
     >
       <span className="eyebrow">OUT OF THIS DEVICE. INTO YOUR VOID.</span>
       <h2 id="drop-title">Drop something.</h2>
-      <p>A note, a link, a file. Pick it up on your other device.</p>
-      {(initialText || initialFiles.length > 0) && (
+      <p>Drop files here or paste an image, text, or link.</p>
+      {!autoUpload && (initialText || initialFiles.length > 0) && (
         <p className="form-note" role="status">
           Ready to send. Review your content and expiration first.
           {initialText &&
@@ -169,7 +233,7 @@ export function DropDialog({
         <button
           className={mode === "text" ? "active" : ""}
           aria-pressed={mode === "text"}
-          disabled={saving || uploading}
+          disabled={saving}
           onClick={() => setMode("text")}
         >
           <Icon name="text" size={18} />
@@ -177,8 +241,9 @@ export function DropDialog({
         </button>
         <button
           className={mode === "files" ? "active" : ""}
+          data-mode="files"
           aria-pressed={mode === "files"}
-          disabled={saving || uploading}
+          disabled={saving}
           onClick={() => setMode("files")}
         >
           <Icon name="file" size={18} />
@@ -194,10 +259,31 @@ export function DropDialog({
           submission.current = crypto.randomUUID();
         }}
       />
+      <div className="composer-label">
+        {mode === "text" && <label htmlFor="drop-text">Text or link</label>}
+        <button
+          ref={pasteButton}
+          type="button"
+          className="text-button"
+          disabled={saving || pasting}
+          onClick={paste}
+        >
+          <Icon name="copy" size={16} />
+          {pasting ? "Reading clipboard…" : "Paste"}
+        </button>
+      </div>
+      {notice && (
+        <p className="form-note" role="status">
+          {notice}
+        </p>
+      )}
       <div hidden={mode !== "files"}>
         {open && (
           <UploadPanel
+            ref={uploads}
             initialFiles={initialFiles}
+            autoUpload={autoUpload}
+            initialRetention={defaultExpiration}
             maxFileBytes={fileLimits.maxFileBytes}
             quotaBytes={fileLimits.storageQuotaBytes}
             onBusy={setUploading}
@@ -211,18 +297,6 @@ export function DropDialog({
       {mode === "text" && (
         <>
           <form onSubmit={submit}>
-            <div className="composer-label">
-              <label htmlFor="drop-text">Text or link</label>
-              <button
-                type="button"
-                className="text-button"
-                disabled={saving || pasting}
-                onClick={paste}
-              >
-                <Icon name="copy" size={16} />
-                {pasting ? "Reading clipboard…" : "Paste"}
-              </button>
-            </div>
             <textarea
               id="drop-text"
               ref={input}
@@ -257,11 +331,6 @@ export function DropDialog({
                 This drop is too long. Shorten it to fit the text limit.
               </p>
             )}
-            {notice && (
-              <p className="form-note" role="status">
-                {notice}
-              </p>
-            )}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -274,7 +343,7 @@ export function DropDialog({
               </span>
               <button
                 className="button primary"
-                disabled={saving || pasting || !text.trim() || bytes > maxBytes}
+                disabled={saving || uploading || pasting || !text.trim() || bytes > maxBytes}
                 type="submit"
               >
                 {saving ? "Dropping…" : "Drop into Void"}
@@ -711,12 +780,12 @@ export function TransferFeed({ section, refreshKey, onAccessError, children }) {
               );
             return (
               <article
-                className="item-card"
+                className={item.type === "link" ? "item-card link-card" : "item-card"}
                 key={item.id}
                 aria-label={`${item.type === "link" ? "Link" : "Text"} drop`}
               >
                 <div className="item-card-heading">
-                  <span className={`item-type ${item.type}`}>
+                  <span className="item-type">
                     <Icon
                       name={item.type === "link" ? "link" : "text"}
                       size={18}

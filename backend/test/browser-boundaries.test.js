@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { safeLink, textBytes, textParts } from "../../shared/text.js";
-import { copyText, pasteText } from "../../frontend/assets/js/clipboard.js";
+import { clipboardContent, copyText, readClipboard } from "../../frontend/assets/js/clipboard.js";
 import { apiRequest } from "../../frontend/assets/js/api.js";
 import { uploadFile } from "../../frontend/assets/js/upload.js";
 
@@ -106,7 +106,10 @@ test("clipboard success preserves exact text; denial/absence require a manual fa
     },
   });
   assert.equal(copied, text);
-  assert.equal(await pasteText({ readText: async () => text }), text);
+  assert.deepEqual(await readClipboard({ readText: async () => text }), {
+    files: [],
+    text,
+  });
   await assert.rejects(copyText(text, {}), /manually/);
   await assert.rejects(
     copyText(text, {
@@ -116,15 +119,57 @@ test("clipboard success preserves exact text; denial/absence require a manual fa
     }),
     /denied/,
   );
-  await assert.rejects(pasteText({}), /Paste/);
+  await assert.rejects(readClipboard({}), /Paste/);
   await assert.rejects(
-    pasteText({
+    readClipboard({
       readText: async () => {
         throw new Error("Permission denied");
       },
     }),
     /denied/,
   );
+});
+
+test("native paste uses the copied file before accompanying text and accepts link-only data", () => {
+  const image = new File(["pixels"], "copied.png", { type: "image/png" });
+  const url = "https://example.com/photo";
+  const getData = (type) => type === "text/plain" ? url : "";
+  assert.deepEqual(clipboardContent({ files: [image], getData }), {
+    files: [image],
+    text: "",
+  });
+  assert.deepEqual(clipboardContent({
+    files: [],
+    items: [{ kind: "file", getAsFile: () => image }],
+    getData,
+  }), { files: [image], text: "" });
+  assert.deepEqual(clipboardContent({
+    getData: (type) => type === "text/uri-list" ? `# Copied link\r\n${url}\r\n` : "",
+  }), { files: [], text: url });
+});
+
+test("the Paste button reads image bytes or exact plain text and supports a text-only fallback", async () => {
+  const image = new Blob(["pixels"], { type: "image/png" });
+  const text = "  https://example.com/photo\n";
+  const item = {
+    types: ["text/plain", "image/png"],
+    async getType(type) {
+      return type === "image/png" ? image : new Blob([text]);
+    },
+  };
+  const result = await readClipboard({ read: async () => [item] });
+  assert.equal(result.files.length, 1);
+  assert.equal(result.files[0].name, "clipboard-image.png");
+  assert.equal(result.files[0].type, image.type);
+  assert.deepEqual(await result.files[0].bytes(), await image.bytes());
+  assert.equal(result.text, "");
+  assert.deepEqual(await readClipboard({
+    read: async () => [{ ...item, types: ["text/plain"] }],
+  }), { files: [], text });
+  assert.deepEqual(await readClipboard({
+    read: async () => { throw new Error("Rich clipboard unavailable"); },
+    readText: async () => text,
+  }), { files: [], text });
 });
 
 test("browser requests keep CSRF headers, private cache policy, and one immutable submission ID", async () => {
